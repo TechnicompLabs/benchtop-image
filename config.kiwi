@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OBS-ExclusiveArch: x86_64 -->
+<image schemaversion="7.6" name="TechniComp-Benchtop" displayname="TechniComp Benchtop Linux">
+    <description type="system">
+        <author>Paul Martin</author>
+        <contact>pmartin@pauldmartin.org</contact>
+        <specification>TechniComp Benchtop Linux - immutable Slowroll-based desktop (minimal first image)</specification>
+    </description>
+    <preferences>
+        <version>0.1.0</version>
+        <packagemanager>zypper</packagemanager>
+        <rpm-excludedocs>true</rpm-excludedocs>
+        <locale>en_US</locale>
+        <type
+            image="oem"
+            filesystem="btrfs"
+            fsmountoptions="compress=zstd:1"
+            firmware="uefi"
+            bootpartition="false"
+            initrd_system="none"
+            efipartsize="750"
+            bootkernel="custom"
+            devicepersistency="by-uuid"
+            btrfs_root_is_subvolume="true"
+            btrfs_root_is_snapshot="true"
+            btrfs_root_is_readonly_snapshot="true"
+            btrfs_quota_groups="true"
+            rootfs_label="TCBENCHTOP"
+        >
+            <bootloader name="custom"/>
+            <partitions>
+                <partition name="ignition" size="1G" mountpoint="/ignition" filesystem="ext4" label="ignition"/>
+            </partitions>
+            <systemdisk>
+                <volume name="home"/>
+                <volume name="root"/>
+                <volume name="opt"/>
+                <volume name="srv"/>
+                <volume name="boot/grub2/i386-pc"/>
+                <volume name="boot/grub2/x86_64-efi" mountpoint="boot/grub2/x86_64-efi"/>
+                <volume name="boot/writable"/>
+                <volume name="usr/local"/>
+                <volume name="var" copy_on_write="false"/>
+            </systemdisk>
+        </type>
+    </preferences>
+    <repository type="rpm-md">
+        <source path="obsrepositories:/"/>
+    </repository>
+    <packages type="image">
+        <!-- The whole TC Benchtop package set. Resolving this against Slowroll
+             x86_64 IS the dependency gate. -->
+        <package name="patterns-tc-benchtop-base"/>
+    </packages>
+    <packages type="bootstrap">
+        <package name="coreutils"/>
+        <package name="gawk"/>
+        <package name="gzip"/>
+        <package name="hostname"/>
+        <package name="openssl"/>
+        <package name="filesystem"/>
+        <package name="glibc-locale-base"/>
+        <package name="ca-certificates-mozilla"/>
+    </packages>
+</image>

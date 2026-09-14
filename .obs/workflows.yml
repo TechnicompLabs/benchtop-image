@@ -1,0 +1,10 @@
+rebuild_on_push:
+  steps:
+    - rebuild_package:
+        project: home:technicomp:benchtop:images
+        package: tc-benchtop-image
+  filters:
+    event: push
+    branches:
+      only:
+        - main
