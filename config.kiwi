@@ -51,10 +51,12 @@
         <!-- The whole TC Benchtop package set. Resolving this against Slowroll
              x86_64 IS the dependency gate. -->
         <package name="patterns-tc-benchtop-base"/>
-        <!-- Full-disk encryption: first-boot LUKS2 encryption plus
-             interactive TPM2 enrolment (recovery key / passphrase fallback). -->
-        <package name="disk-encryption-tool"/>
-        <package name="sdbootutil-jeos-firstboot-enroll"/>
+        <!-- Installer: tik (Aeon Tailored Installation Kit). Encryption and
+             disk sizing happen at install time via systemd-repart + tik, not in
+             the initrd. VERIFY tik resolves in the build repos before relying on
+             this build; if it lives in an Aeon devel project, add that project as
+             a repository path. -->
+        <package name="tik"/>
         <!-- Performance services (Source: notes Performance/*). rtkit provides
              rtkit-daemon; systemd-experimental provides systemd-oomd on openSUSE. -->
         <package name="rtkit"/>

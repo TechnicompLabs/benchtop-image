@@ -109,28 +109,87 @@ chmod a+x /etc/fstab.script
 mkdir -p /ignition
 
 #======================================
-# Full-disk encryption defaults (TCBL)
+# Full-disk encryption (install-time, via tik)
 #--------------------------------------
-# Seal the TPM2 policy to update-stable PCRs only: 0 (firmware code),
-# 2 (option ROM / driver code) and 7 (Secure Boot state). The
-# kernel-volatile PCRs (4,5,8,9) are deliberately excluded so that a
-# kernel update does not invalidate the sealed key.
-mkdir -p /etc/sysconfig
-echo 'FDE_SEAL_PCR_LIST="0,2,7"' > /etc/sysconfig/fde-tools
+# TCBL no longer encrypts in the initrd. The installer (tik + systemd-repart)
+# creates the LUKS2 root and sizes it at install time; tik enrols TPM2 or a
+# passphrase plus a recovery key. The TCBL reseal module below re-seals to the
+# stable PCR list 0,2,7. measure-pcr-validator.ignore=yes stays in the kernel
+# cmdline (added further down) and is copied onto the target, so a stale PCR
+# prediction never halts the boot even if the reseal is skipped.
 
-# Force the first-boot encryption dracut module into the initrd so the
-# image can self-encrypt on first boot regardless of host-only probing.
-mkdir -p /etc/dracut.conf.d
-echo 'add_dracutmodules+=" disk-encryption-tool "' > /etc/dracut.conf.d/50-tcbl-fde.conf
+#======================================
+# Installer (tik) wiring
+#--------------------------------------
+# Autologin into the tik session off the installer USB. tik's 10-sicu module
+# clears this on the installed target, so only the USB runs the installer.
+if [ -e /etc/sysconfig/displaymanager ]; then
+	sed -i 's/^DISPLAYMANAGER_AUTOLOGIN=.*/DISPLAYMANAGER_AUTOLOGIN="tik"/' /etc/sysconfig/displaymanager
+	grep -q '^DISPLAYMANAGER_AUTOLOGIN=' /etc/sysconfig/displaymanager || echo 'DISPLAYMANAGER_AUTOLOGIN="tik"' >> /etc/sysconfig/displaymanager
+else
+	mkdir -p /etc/sysconfig
+	echo 'DISPLAYMANAGER_AUTOLOGIN="tik"' > /etc/sysconfig/displaymanager
+fi
 
-# The single switch that activates first-boot FDE. Its presence makes
-# disk-encryption-tool encrypt the root in the initrd AND makes
-# jeos-firstboot run the interactive enrollment (TPM2 / recovery key /
-# passphrase). Without it the initrd prints "no encryption" and boots
-# plaintext. jeos-firstboot removes the marker after the first boot, so
-# it is a one-shot.
-mkdir -p /var/lib/YaST2
-touch /var/lib/YaST2/reconfig_system
+# tik configuration
+mkdir -p /etc/tik
+cat > /etc/tik/config <<'TIKCONF'
+# TechniComp Benchtop Linux tik configuration
+TIK_OS_NAME="TechniComp Benchtop Linux"
+# USB devices are filtered out of the install-target list by default.
+TIKCONF
+
+# repart.d layout for tik self-deployment. systemd-repart creates these on the
+# target, copies blocks from the booted image (CopyBlocks=auto), encrypts the
+# root (Encrypt=key-file) and grows it to fill the disk in one pass.
+# VERIFY the Type= UUIDs against a real build (sfdisk -d): kiwi may emit the
+# generic Linux type for root rather than root-x86-64, and CopyBlocks=auto
+# matches source partitions by type.
+mkdir -p /usr/lib/repart.d
+cat > /usr/lib/repart.d/10-esp.conf <<'REPART'
+[Partition]
+Type=esp
+CopyBlocks=auto
+SizeMinBytes=750M
+SizeMaxBytes=750M
+REPART
+cat > /usr/lib/repart.d/20-ignition.conf <<'REPART'
+[Partition]
+Type=linux-generic
+CopyBlocks=auto
+SizeMinBytes=1G
+SizeMaxBytes=1G
+REPART
+cat > /usr/lib/repart.d/30-root.conf <<'REPART'
+[Partition]
+Type=root
+Encrypt=key-file
+CopyBlocks=auto
+REPART
+
+# TCBL reseal module: after tik's 15-encrypt enrols TPM2 with Aeon's 4,5,7,9,
+# re-seal to the stable 0,2,7 set. Runs after 15-encrypt (numbered 16), TPM
+# (Default) mode only. If this step is skipped or fails the system stays on
+# 4,5,7,9, but the cmdline validator-ignore still prevents any halt.
+# VERIFY on a real install: tik custom-module ordering, the mount/keyfile state
+# after 15-encrypt, and that a second TPM2 enrol replaces the first policy.
+mkdir -p /etc/tik/modules/post
+cat > /etc/tik/modules/post/16-tcbl-reseal <<'RESEAL'
+# SPDX-License-Identifier: MIT
+# TCBL: re-seal the TPM2 policy to the stable PCR list 0,2,7, replacing tik's
+# default 4,5,7,9, so a kernel update never triggers a recovery-key prompt.
+if [ "${tik_encrypt_mode}" == 0 ]; then
+    tik_target_mount "" "required"
+    tik_progress_step "Re-sealing TPM to stable PCRs (0,2,7)" 90
+    log "[tcbl-reseal] setting FDE_SEAL_PCR_LIST=0,2,7 and re-enrolling TPM2"
+    echo "FDE_SEAL_PCR_LIST=0,2,7" | prun tee "${TIK_ROOT_MNT}/etc/sysconfig/fde-tools"
+    if ! prun /usr/bin/grep -q 'measure-pcr-validator.ignore=yes' "${TIK_ROOT_MNT}/etc/kernel/cmdline"; then
+        prun /usr/bin/sed -i -e 's,$, measure-pcr-validator.ignore=yes,' "${TIK_ROOT_MNT}/etc/kernel/cmdline"
+    fi
+    prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi --method=tpm2 enroll 1>&2
+    log "[tcbl-reseal] re-seal complete"
+fi
+RESEAL
 
 #======================================
 # Enable NetworkManager
