@@ -109,9 +109,59 @@ chmod a+x /etc/fstab.script
 mkdir -p /ignition
 
 #======================================
+# Full-disk encryption defaults (TCBL)
+#--------------------------------------
+# Seal the TPM2 policy to update-stable PCRs only: 0 (firmware code),
+# 2 (option ROM / driver code) and 7 (Secure Boot state). The
+# kernel-volatile PCRs (4,5,8,9) are deliberately excluded so that a
+# kernel update does not invalidate the sealed key.
+mkdir -p /etc/sysconfig
+echo 'FDE_SEAL_PCR_LIST="0,2,7"' > /etc/sysconfig/fde-tools
+
+# Force the first-boot encryption dracut module into the initrd so the
+# image can self-encrypt on first boot regardless of host-only probing.
+mkdir -p /etc/dracut.conf.d
+echo 'add_dracutmodules+=" disk-encryption-tool "' > /etc/dracut.conf.d/50-tcbl-fde.conf
+
+# The single switch that activates first-boot FDE. Its presence makes
+# disk-encryption-tool encrypt the root in the initrd AND makes
+# jeos-firstboot run the interactive enrollment (TPM2 / recovery key /
+# passphrase). Without it the initrd prints "no encryption" and boots
+# plaintext. jeos-firstboot removes the marker after the first boot, so
+# it is a one-shot.
+mkdir -p /var/lib/YaST2
+touch /var/lib/YaST2/reconfig_system
+
+#======================================
 # Enable NetworkManager
 #--------------------------------------
 systemctl enable NetworkManager
+
+#======================================
+# Enable performance services
+#--------------------------------------
+# Source: notes Performance/Kernel Tuning.md, Memory Management.md, Storage and IO.md.
+# irqbalance, systemd-zram-service (zramswap.service) and util-linux (fstrim.timer)
+# come from patterns-tc-benchtop-base; rtkit and systemd-oomd (systemd-experimental)
+# are pulled in via config.kiwi. The enable is guarded so a unit missing from the
+# image cannot fail the set -e build.
+# systemd-oomd.service is commented out in the list below: it requires
+# systemd-experimental (also commented out in config.kiwi). Uncomment it
+# here AND uncomment systemd-experimental in config.kiwi to enable it.
+units=(
+    rtkit-daemon.service
+    irqbalance.service
+    zramswap.service
+    # systemd-oomd.service
+    fstrim.timer
+)
+for unit in "${units[@]}"; do
+    if systemctl enable "$unit"; then
+        echo "TCBL: enabled $unit"
+    else
+        echo "TCBL: WARNING: could not enable $unit (unit not present in image)"
+    fi
+done
 
 #======================================
 # Enable ZYPP_SINGLE_RPMTRANS
@@ -145,6 +195,22 @@ if [[ -e /etc/selinux/config ]]; then
 	# Move an /.autorelabel file from initial installation to writeable location
 	test -f /.autorelabel && mv /.autorelabel /etc/selinux/.autorelabel
 fi
+
+# Make PCR 15 validation advisory only, never a poweroff. This prevents
+# the reboot-after-unlock behaviour seen on Aeon when a post-update PCR
+# prediction is stale: the disk still unlocks and boot reaches the desktop.
+cmdline+=("measure-pcr-validator.ignore=yes")
+
+# Performance tuning (Source: notes Performance/Kernel Tuning.md, Storage and IO.md).
+# Full preemption, threaded IRQs and RCU no-callback/lazy for desktop latency;
+# disable the NMI/hardware watchdog; skip staggered SATA spin-up at boot.
+cmdline+=("preempt=full")
+cmdline+=("threadirqs")
+cmdline+=("rcu_nocbs=all")
+cmdline+=("rcutree.enable_rcu_lazy=1")
+cmdline+=("nowatchdog")
+cmdline+=("nmi_watchdog=0")
+cmdline+=("libahci.ignore_sss=1")
 
 if [ -e /etc/default/grub ]; then
 	sed -i "s#^GRUB_CMDLINE_LINUX_DEFAULT=.*\$#GRUB_CMDLINE_LINUX_DEFAULT=\"${cmdline[*]}\"#" /etc/default/grub

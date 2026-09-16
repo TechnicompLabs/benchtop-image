@@ -51,6 +51,16 @@
         <!-- The whole TC Benchtop package set. Resolving this against Slowroll
              x86_64 IS the dependency gate. -->
         <package name="patterns-tc-benchtop-base"/>
+        <!-- Full-disk encryption: first-boot LUKS2 encryption plus
+             interactive TPM2 enrolment (recovery key / passphrase fallback). -->
+        <package name="disk-encryption-tool"/>
+        <package name="sdbootutil-jeos-firstboot-enroll"/>
+        <!-- Performance services (Source: notes Performance/*). rtkit provides
+             rtkit-daemon; systemd-experimental provides systemd-oomd on openSUSE. -->
+        <package name="rtkit"/>
+        <!-- systemd-oomd is disabled for now; uncomment to pull the experimental
+             package (and uncomment systemd-oomd.service in config.sh). -->
+        <!-- <package name="systemd-experimental"/> -->
     </packages>
     <packages type="bootstrap">
         <package name="coreutils"/>
