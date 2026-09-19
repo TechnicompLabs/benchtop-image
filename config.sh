@@ -131,6 +131,53 @@ else
 	echo 'DISPLAYMANAGER_AUTOLOGIN="tik"' > /etc/sysconfig/displaymanager
 fi
 
+#======================================
+# Installer session: tik user + GNOME autostart (self-deploy USB only)
+#--------------------------------------
+# Autologin (DISPLAYMANAGER_AUTOLOGIN="tik", set above) logs the "tik" user
+# into the normal GNOME session; a GNOME autostart entry then launches
+# /usr/bin/tik. tik's 10-sicu post module removes all of this on the deployed
+# target, so only the USB runs the installer. Mirrors the "tik specifics" block
+# of devel:microos:aeon:images/Aeon config.sh, rebranded for TCBL. Requires a
+# full GNOME session (gdm + gnome-shell + gnome-session-wayland) in the image.
+groupadd -f wheel
+useradd -m tik
+usermod -aG wheel tik
+
+cat > /etc/sudoers.d/51-tik << "EOF"
+tik ALL = (root) NOPASSWD: ALL
+EOF
+
+cat > /etc/polkit-1/rules.d/10-tik.rules << "EOF"
+polkit.addRule(function(action, subject) {
+    if (subject.user == "tik") {
+        return polkit.Result.YES;
+    }
+});
+EOF
+
+chown tik:users /ignition
+
+mkdir -p /home/tik/.local/share/applications
+cat > /home/tik/.local/share/applications/org.technicomp.tik.desktop << "EOF"
+[Desktop Entry]
+Name=TechniComp Benchtop Linux Installer
+Comment=Installs TechniComp Benchtop Linux
+Exec=/usr/bin/tik
+Icon=drive-harddisk
+Type=Application
+Categories=System;
+EOF
+
+mkdir -p /home/tik/.config/autostart
+ln -s /home/tik/.local/share/applications/org.technicomp.tik.desktop \
+      /home/tik/.config/autostart/org.technicomp.tik.desktop
+
+mkdir -p /home/tik/.config/gtk-3.0
+echo "file:///ignition" >> /home/tik/.config/gtk-3.0/bookmarks
+
+chown -R tik:users /home/tik
+
 # tik configuration
 mkdir -p /etc/tik
 cat > /etc/tik/config <<'TIKCONF'
@@ -198,6 +245,17 @@ RESEAL
 # Enable NetworkManager
 #--------------------------------------
 systemctl enable NetworkManager
+
+#======================================
+# Enable the display manager (graphical login)
+#--------------------------------------
+# graphical.target is the default (baseSetRunlevel above), but the display
+# manager itself must be enabled. Aeon does this through
+# systemd-presets-branding-Aeon; TCBL dropped that preset package and
+# tc-benchtop-presets does not exist yet, so enable it explicitly here.
+# On modern openSUSE gdm.service carries the display-manager.service alias;
+# enable whichever the image provides so a text console is never the result.
+systemctl enable display-manager.service || systemctl enable gdm.service
 
 #======================================
 # Enable performance services
