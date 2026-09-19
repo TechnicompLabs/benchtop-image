@@ -4,7 +4,7 @@
     <description type="system">
         <author>Paul Martin</author>
         <contact>pmartin@pauldmartin.org</contact>
-        <specification>TechniComp Benchtop Linux - immutable Slowroll-based desktop (minimal first image)</specification>
+        <specification>TechniComp Benchtop Linux - immutable Tumbleweed-based desktop (minimal first image)</specification>
     </description>
     <preferences>
         <version>0.1.0</version>
@@ -48,8 +48,8 @@
         <source path="obsrepositories:/"/>
     </repository>
     <packages type="image">
-        <!-- The whole TC Benchtop package set. Resolving this against Slowroll
-             x86_64 IS the dependency gate. -->
+        <!-- The whole TC Benchtop package set. Resolving this against
+             openSUSE:Factory x86_64 IS the dependency gate. -->
         <package name="patterns-tc-benchtop-base"/>
         <!-- Installer: tik (Aeon Tailored Installation Kit). Encryption and
              disk sizing happen at install time via systemd-repart + tik, not in
@@ -57,12 +57,23 @@
              this build; if it lives in an Aeon devel project, add that project as
              a repository path. -->
         <package name="tik"/>
+        <!-- tik requires the virtual "tik-config"; tik-config-Aeon and
+             tik-config-generic both provide it, so OBS refuses to choose
+             ("have choice for tik-config needed by tik") and the build
+             will not start. Name the provider explicitly. Swap this for
+             tik-config-benchtop once that package exists. -->
+        <package name="tik-config-generic"/>
         <!-- Performance services (Source: notes Performance/*). rtkit provides
              rtkit-daemon; systemd-experimental provides systemd-oomd on openSUSE. -->
         <package name="rtkit"/>
         <!-- systemd-oomd is disabled for now; uncomment to pull the experimental
              package (and uncomment systemd-oomd.service in config.sh). -->
         <!-- <package name="systemd-experimental"/> -->
+        <!-- Wi-Fi stays on wpa_supplicant (NetworkManager's default backend).
+             Nothing in patterns-tc-benchtop-base requires iwd; this lock keeps
+             it from arriving as a recommended package. KIWI implements <ignore>
+             as "zypper al", so the lock persists in the built image. -->
+        <ignore name="iwd"/>
     </packages>
     <packages type="bootstrap">
         <package name="coreutils"/>

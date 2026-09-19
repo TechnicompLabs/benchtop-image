@@ -136,6 +136,9 @@ mkdir -p /etc/tik
 cat > /etc/tik/config <<'TIKCONF'
 # TechniComp Benchtop Linux tik configuration
 TIK_OS_NAME="TechniComp Benchtop Linux"
+# Upstream default is https://aeondesktop.org/reportbug; tik reads
+# /usr/lib/tik/config first and this file second, so this wins.
+TIK_BUG_URL="https://github.com/TechnicompLabs/benchtop-image/issues"
 # USB devices are filtered out of the install-target list by default.
 TIKCONF
 
@@ -266,8 +269,15 @@ cmdline+=("measure-pcr-validator.ignore=yes")
 cmdline+=("preempt=full")
 cmdline+=("threadirqs")
 cmdline+=("rcu_nocbs=all")
+# rcutree.enable_rcu_lazy is a no-op unless the kernel is built with
+# CONFIG_RCU_LAZY=y, which the SUSE kernel configs (Tumbleweed stable,
+# SL-16.0, SL-16.1) do not set. Harmless: unknown dotted parameters are
+# ignored. rcu_nocbs=all still offloads callbacks. Kept so the parameter is
+# in place if a CONFIG_RCU_LAZY kernel is adopted.
 cmdline+=("rcutree.enable_rcu_lazy=1")
 cmdline+=("nowatchdog")
+# Redundant with nowatchdog (which disables both lockup detectors); kept
+# explicit.
 cmdline+=("nmi_watchdog=0")
 cmdline+=("libahci.ignore_sss=1")
 
