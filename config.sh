@@ -253,12 +253,16 @@ systemctl enable NetworkManager
 # Enable the display manager (graphical login)
 #--------------------------------------
 # graphical.target is the default (baseSetRunlevel above), but the display
-# manager itself must be enabled. Aeon does this through
-# systemd-presets-branding-Aeon; TCBL dropped that preset package and
-# tc-benchtop-presets does not exist yet, so enable it explicitly here.
-# On modern openSUSE gdm.service carries the display-manager.service alias;
-# enable whichever the image provides so a text console is never the result.
-systemctl enable display-manager.service || systemctl enable gdm.service
+# manager still has to be wired in, and openSUSE makes that fiddly: it selects
+# the DM via /etc/sysconfig/displaymanager and ships a generic, *symlinked*
+# display-manager.service, so `systemctl enable display-manager.service` refuses
+# it ("linked unit") and there is no gdm.service. Set the selector and create
+# the graphical.target want by hand -- exactly what enable does under the hood.
+# (Aeon gets this from systemd-presets-branding-Aeon, which TCBL dropped.)
+sed -i 's/^DISPLAYMANAGER=.*/DISPLAYMANAGER="gdm"/' /etc/sysconfig/displaymanager
+grep -q '^DISPLAYMANAGER=' /etc/sysconfig/displaymanager || echo 'DISPLAYMANAGER="gdm"' >> /etc/sysconfig/displaymanager
+mkdir -p /etc/systemd/system/graphical.target.wants
+ln -sf /usr/lib/systemd/system/display-manager.service /etc/systemd/system/graphical.target.wants/display-manager.service
 
 #======================================
 # Enable performance services
