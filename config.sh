@@ -192,32 +192,58 @@ TIK_BUG_URL="https://github.com/TechnicompLabs/benchtop-image/issues"
 # USB devices are filtered out of the install-target list by default.
 TIKCONF
 
-# repart.d layout for tik self-deployment. systemd-repart creates these on the
-# target, copies blocks from the booted image (CopyBlocks=auto), encrypts the
-# root (Encrypt=key-file) and grows it to fill the disk in one pass.
-# VERIFY the Type= UUIDs against a real build (sfdisk -d): kiwi may emit the
-# generic Linux type for root rather than root-x86-64, and CopyBlocks=auto
-# matches source partitions by type.
+# repart.d layout for tik self-deployment, taken verbatim from Aeon's
+# systemd-repart-branding-Aeon (00-esp.conf + 50-root.conf). The ESP is a fresh
+# vfat; the root is a fresh *btrfs* whose subvolume/snapshot layout repart builds
+# and then populates file-by-file with CopyFiles= from the running USB (NOT
+# CopyBlocks -- a btrfs-snapshot rootfs deploys per-file), then encrypts.
+# ExcludeFiles strips the tik installer artifacts (tik user, sudoers, polkit,
+# /ignition) from the deployed system. No ignition partition on the target;
+# Aeon's self-deploy layout has none.
 mkdir -p /usr/lib/repart.d
-cat > /usr/lib/repart.d/10-esp.conf <<'REPART'
+cat > /usr/lib/repart.d/00-esp.conf <<'REPART'
 [Partition]
 Type=esp
-CopyBlocks=auto
+Format=vfat
 SizeMinBytes=750M
-SizeMaxBytes=750M
+SizeMaxBytes=4G
+MountPoint=/boot/efi
 REPART
-cat > /usr/lib/repart.d/20-ignition.conf <<'REPART'
-[Partition]
-Type=linux-generic
-CopyBlocks=auto
-SizeMinBytes=1G
-SizeMaxBytes=1G
-REPART
-cat > /usr/lib/repart.d/30-root.conf <<'REPART'
+cat > /usr/lib/repart.d/50-root.conf <<'REPART'
 [Partition]
 Type=root
+Format=btrfs
+Compression=zstd
+CompressionLevel=1
+GrowFileSystem=off
+Subvolumes=/@ /@/.snapshots /@/home /@/opt /@/root /@/srv /@/var /@/boot/writable /@/usr/local /@/boot/grub2/x86_64-efi /@/boot/grub2/i386-pc /@/.snapshots/1/snapshot:ro /@/.snapshots/1/snapshot/etc
+MakeDirectories=/@ /@/.snapshots /@/.snapshots/1/snapshot /@/.snapshots/1/snapshot/etc /@/.snapshots/1/snapshot/.snapshots /@/.snapshots/1/snapshot/boot/efi /@/.snapshots/1/snapshot/boot/writable /@/.snapshots/1/snapshot/boot/grub2/x86_64-efi /@/.snapshots/1/snapshot/boot/grub2/i386-pc /@/home /@/opt /@/root /@/srv /@/var /@/boot/writable /@/usr/local /@/boot/grub2/x86_64-efi /@/boot/grub2/i386-pc
+DefaultSubvolume=/@/.snapshots/1/snapshot
+MountPoint=/:'compress=zstd:1',ro=vfs
+MountPoint=/.snapshots:'compress=zstd:1',subvol=/@/.snapshots
+MountPoint=/home:'compress=zstd:1',subvol=/@/home
+MountPoint=/opt:'compress=zstd:1',subvol=/@/opt
+MountPoint=/root:'compress=zstd:1',subvol=/@/root,x-initrd.mount
+MountPoint=/srv:'compress=zstd:1',subvol=/@/srv
+MountPoint=/var:'compress=zstd:1',subvol=/@/var,x-initrd.mount
+MountPoint=/boot/writable:'compress=zstd:1',subvol=/@/boot/writable
+MountPoint=/usr/local:'compress=zstd:1',subvol=/@/usr/local
+MountPoint=/boot/grub2/x86_64-efi:'compress=zstd:1',subvol=/@/boot/grub2/x86_64-efi
+MountPoint=/boot/grub2/i386-pc:'compress=zstd:1',subvol=/@/boot/grub2/i386-pc
+ExcludeFilesTarget=/@/.snapshots/1/snapshot/.snapshots/ /@/.snapshots/1/snapshot/home/ /@/.snapshots/1/snapshot/opt/ /@/.snapshots/1/snapshot/root/ /@/.snapshots/1/snapshot/srv/ /@/.snapshots/1/snapshot/var/ /@/.snapshots/1/snapshot/boot/writable/ /@/.snapshots/1/snapshot/usr/local/ /@/.snapshots/1/snapshot/boot/grub2/x86_64-efi/ /@/.snapshots/1/snapshot/boot/grub2/i386-pc/
+ExcludeFiles=/ignition /etc/sudoers.d/51-tik /etc/polkit-1/rules.d/10-tik.rules /etc/tik-firstboot /home/tik /proc/ /dev/ /sys/ /tmp/ /var/tmp/ /boot/ /mnt/ /run/
+CopyFiles=/:/@/.snapshots/1/snapshot
+CopyFiles=/.snapshots/1/info.xml:/@/.snapshots/1/info.xml
+CopyFiles=/home:/@/home
+CopyFiles=/opt:/@/opt
+CopyFiles=/root:/@/root
+CopyFiles=/srv:/@/srv
+CopyFiles=/var:/@/var
+CopyFiles=/boot/writable:/@/boot/writable
+CopyFiles=/usr/local:/@/usr/local
+#CopyFiles=/boot/grub2/x86_64-efi:/@/boot/grub2/x86_64-efi
+#CopyFiles=/boot/grub2/i386-pc:/@/boot/grub2/i386-pc
 Encrypt=key-file
-CopyBlocks=auto
 REPART
 
 # TCBL reseal module: after tik's 15-encrypt enrols TPM2 with Aeon's 4,5,7,9,
