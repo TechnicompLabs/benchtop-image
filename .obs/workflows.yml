@@ -1,6 +1,6 @@
 rebuild_on_push:
   steps:
-    - rebuild_package:
+    - trigger_services:
         project: home:technicomp:benchtop:images
         package: tc-benchtop-image
   filters:

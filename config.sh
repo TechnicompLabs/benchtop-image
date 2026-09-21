@@ -176,6 +176,9 @@ ln -s /home/tik/.local/share/applications/org.technicomp.tik.desktop \
 mkdir -p /home/tik/.config/gtk-3.0
 echo "file:///ignition" >> /home/tik/.config/gtk-3.0/bookmarks
 
+# Suppress the GNOME welcome/initial-setup wizard for the tik user, so the
+# installer autostart owns the first session instead of gnome-initial-setup.
+echo yes > /home/tik/.config/gnome-initial-setup-done
 chown -R tik:users /home/tik
 
 # tik configuration
