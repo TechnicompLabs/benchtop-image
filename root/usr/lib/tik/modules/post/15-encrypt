@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Copyright 2024 SUSE LLC
+# SPDX-FileCopyrightText: Copyright 2024 Richard Brown
+# SPDX-FileCopyrightText: Copyright 2025 Tobias Görgens
+
+# Module does not actually do any encryption, but is intended to finish installation of an encrypted image, such as one deployed via systemd-repart
+# Module expects to find a single ESP partition (find_esp) and a single LUKS2 partition (find_crypt) on $TIK_INSTALL_DEVICE, upon which it will do the following
+#   - Open the encrypted device, mounting var, etc, boot/efi, tmp, run, sys, dev and proc (open_partition)
+#   - Against the mounted partition, do the following (configure_encryption)
+#       - write /etc/kernel/cmdline
+#       - write /etc/crypttab
+#       - update any /etc/fstab lines regarding /boot/efi and replace them with the correct ones for the on disk vfat filesystem
+#       - populate /boot/efi with sdbootutil install & sdbootutil mkinitrd
+#       - populate /etc/sysconfig/fde-tools (so the measurements can be updated on first boot)
+#   - Close the partition (close_partition)
+#   - Generate a recovery key (generate_recoveryKey)
+#   - Add recovery key to device and identify it as a systemd-recovery key (add_recoveryKey)
+#   - Display the recovery key to the user (display_recoveryKey)
+#   - Remove the temporary key-file and replace it either with TPM enrollment or a user-supplied passphrase (add_key)
+# It is expected the LUKS2 partition is already encrypted with a key-file in the only populated keyslot.
+
+generate_recoveryKey() {
+    tik_progress_step "Generating recovery key" 0
+    log "[generate_recoveryKey] generating recovery key"
+    modhex=('c' 'b' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'n' 'r' 't' 'u' 'v')
+    mapfile -t raw_key < <(hexdump -v --format '1/1 "%u\n"' -n 32 /dev/random)
+    [ "${#raw_key[@]}" = 32 ]
+    key=""
+    for ((i=0;i<"${#raw_key[@]}";++i)); do
+        [ "$i" -gt 0 ] && [ "$((i%4))" -eq 0 ] && key="${key}-"
+        c="${raw_key[i]}"
+        key="${key}${modhex[$((c>>4))]}${modhex[$((c&15))]}"
+    done
+    log "[generate_recoveryKey] adding recovery key to roots sdbootutil user keyring"
+    logging=false
+    pkexec keyctl add user sdbootutil ${key} @u
+    logging=true
+}
+
+display_recoveryKey() {
+    local defaultmsg="This ${TIK_OS_NAME} system is encrypted and checks its own integrity on every boot\nIn the event of these integrity checks failing, you will need to use the Recovery Key provided below to enter this system\n\nLikely reasons for integrity checks failing include:\n\n• Secure Boot changed from enabled or disabled\n• Boot drive was moved to a different computer\n• Disk partitions were changed\n• Boot loader or initrd were altered unexpectedly\n\nIf you are unaware as to why the system is requesting the recovery key, this systems security may have been compromised\nThe best course of action may be to not unlock the disk until you can determine what changed to require the Recovery Key\n\nThis systems Recovery Key is:\n\n        <b><big>${key}</big></b>\n\nPlease save this secret Recovery Key in a secure location\n\n"
+    local fallbackmsg="In addition to your Passphrase a Recovery Key has been generated:\n\n        <b><big>${key}</big></b>\n\nPlease save this secret Recovery Key in a secure location\nIt may be used to regain access to this system if the other Passphrase becomes lost or forgotten\n\n"
+    local message
+    [ "${tik_encrypt_mode}" == 0 ] && message=${defaultmsg}
+    [ "${tik_encrypt_mode}" == 1 ] && message=${fallbackmsg}
+    log "[display_recoveryKey] displaying recovery key"
+    logging=false
+    d --width=500 --height=500 --no-wrap --warning --icon=security-high-symbolic --title="Encryption Recovery Key" --text="${message}You may optionally scan the recovery key off screen:\n<span face='monospace'>$(qrencode ${key} -t UTF8i)</span>\nFor more information please visit <tt>https://aeondesktop.org/encrypt</tt>"
+    logging=true
+    log "[display_recoveryKey] recovery key dialogue dismissed"
+}
+
+configure_encryption() {
+    tik_target_mount "" "required"
+
+    tik_progress_step "Configuring encryption and boot" 20
+
+    log "[configure_encryption] configuring cmdline, crypttab, PCR policy, fstab and populating ${TIK_ESP_PART}"
+
+    espUUID="$(lsblk -n -r -o UUID "${TIK_ESP_PART}" | head -n1)"
+    [ -n "${espUUID}" ] || error "ESP UUID could not be determined for ${TIK_ESP_PART}"
+    prun /usr/bin/gawk -v espUUID="${espUUID}" -i inplace '$2 == "/boot/efi" { $1 = "UUID="espUUID } { print $0 }' "${TIK_ROOT_MNT}/etc/fstab"
+
+    # root=UUID= cmdline definition is a hard requirement of sdbootutil for updating predictions
+    rootUUID=$(lsblk -n -r -o UUID "${TIK_ROOT_DEV}")
+    prun /usr/bin/sed -i -e "s,\$, root=UUID=${rootUUID}," "${TIK_ROOT_MNT}/etc/kernel/cmdline"
+
+    # /etc/crypttab is a hard requirement of sdbootutil for updating predictions
+    cryptUUID=$(lsblk -n -r -d -o UUID "${TIK_CRYPT_PART}")
+    cryptName="${TIK_CRYPT_MAPPER:-cr_root}"
+    echo "${cryptName} UUID=${cryptUUID} none x-initrd.attach" | prun tee "${TIK_ROOT_MNT}/etc/crypttab"
+
+    # FIXME: Dracut gets confused by previous installations on occasion with the default config, override the problematic option temporarily
+    echo "hostonly_cmdline=\"no\"" | prun tee "${TIK_ROOT_MNT}/etc/dracut.conf.d/99-tik.conf"
+
+    # Install bootloader with sdbootutil
+    prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi --no-variables install 1>&2
+
+    tik_progress_step "Enrolling recovery key" 40
+    prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi --method=recovery-key enroll 1>&2
+
+    # If Default mode has been detected, configure PCR policy.
+    # `etc/sysconfig/fde-tools` must be created before any calls to sdbtools,
+    # because sdbootutil expects at least one of the configuration files being
+    # present. See
+    # https://github.com/openSUSE/sdbootutil/commit/8d3db8b01f5681c11054c37145aad3e3973a7741
+    if [ "${tik_encrypt_mode}" == 0 ]; then
+        tik_progress_step "Enrolling TPM key" 60
+        # Explaining the chosen PCR list below
+        # - 4 - Bootloader and drivers, should never recovery key as bootloader should only be updated with new PCR measurements
+        # - 5 - GPT Partition table, should never require recovery key as partition layout shouldn't change
+        # - 7 - SecureBoot state, will require recovery key if SecureBoot is enabled/disabled
+        # - 9 - initrd - should never require recovery key as initrd should only be updated with new PCR measurements
+        echo "FDE_SEAL_PCR_LIST=4,5,7,9" | prun tee "${TIK_ROOT_MNT}/etc/sysconfig/fde-tools"
+        # Explaining why the following PCRs were not used
+        # - 0 - UEFI firmware, will require recovery key after firmware update and is particularly painful to re-enrol
+        # - 1 - Not only changes with CPU/RAM/hardware changes, but also when UEFI config changes are made, which is too common to lockdown
+        # - 2 - Includes option ROMs on pluggable hardware, such as external GPUs. Attaching a GPU to your laptop shouldn't hinder booting.
+        # - 3 - Firmware from pluggable hardware. Attaching hardware to your laptop shouldn't hinder booting
+        prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi --method=tpm2 enroll 1>&2
+    else
+        tik_progress_step "Setting encryption passphrase" 60
+        d --width=500 --height=300 --no-wrap --warning --icon=security-high-symbolic --title="Set Encryption Passphrase" --text="This ${TIK_OS_NAME} system is encrypted and will require a Passphrase on every boot\n\nYou will be prompted to set the Passphrase on the next screen\n\nFor more information please visit <tt>https://aeondesktop.org/encrypt</tt>"
+        log "[configure_encryption] Fallback Mode - Prompting user for passphrase for ${TIK_CRYPT_PART}"
+
+        while true; do
+            logging=false
+            d_opt --password --title="Set Encryption Passphrase"
+            pw="${result}"
+            d_opt --password --title="Type Passphrase Again"
+            pw_check="${result}"
+            logging=true
+
+            # User cancelled both dialogs -> no passphrase set, just exit loop
+            if [ -z "${pw}" ] && [ -z "${pw_check}" ]; then
+                break
+            fi
+
+            if [ "${pw}" != "${pw_check}" ]; then
+                d --warning --no-wrap --title="Passphrase did not match" --text="Please try again"
+                pw=""
+                pw_check=""
+                continue
+            fi
+
+            prun /usr/sbin/cryptsetup luksAddKey --key-file="${tik_keyfile}" --batch-mode --force-password "${TIK_CRYPT_PART}" <<<"${pw}"
+            # Initrd wasn't generated by install or enroll as no TPM interaction, so do it now.
+            prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi mkinitrd 1>&2
+            break
+        done
+    fi
+
+    # FIXME: Dracut gets confused by previous installations on occasion with the default config, remove override now initrd done
+    prun /usr/bin/rm "${TIK_ROOT_MNT}/etc/dracut.conf.d/99-tik.conf"
+    tik_progress_step "Encryption configuration complete" 80
+}
+
+generate_recoveryKey
+configure_encryption
+display_recoveryKey
+tik_progress_step "Encryption configured" 100

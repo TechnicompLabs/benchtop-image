@@ -33,6 +33,11 @@ echo "Configure image: [$kiwi_iname]-[$kiwi_profiles]..."
 # Systemd controls the console font now
 echo FONT="eurlatgr.psfu" >> /etc/vconsole.conf
 
+# Build stamp: identifies exactly which build produced this image (and the
+# system installed from it). `cat /usr/lib/tc-benchtop-build-id` on any booted
+# image, matched against the OBS build time, proves whether a burn is current.
+echo "TCBL $(date -u +%FT%TZ)" > /usr/lib/tc-benchtop-build-id
+
 #======================================
 # prepare for setting root pw, timezone
 #--------------------------------------
@@ -179,6 +184,7 @@ echo "file:///ignition" >> /home/tik/.config/gtk-3.0/bookmarks
 # Suppress the GNOME welcome/initial-setup wizard for the tik user, so the
 # installer autostart owns the first session instead of gnome-initial-setup.
 echo yes > /home/tik/.config/gnome-initial-setup-done
+
 chown -R tik:users /home/tik
 
 # tik configuration
@@ -245,6 +251,19 @@ CopyFiles=/usr/local:/@/usr/local
 #CopyFiles=/boot/grub2/i386-pc:/@/boot/grub2/i386-pc
 Encrypt=key-file
 REPART
+
+# TCBL installer wallpaper (custom tik pre module). Runs after the vendored
+# pre/05-setup-gnome-env (which disables the installer screen lock) and sets the
+# TechniComp branded background for the tik session.
+mkdir -p /etc/tik/modules/pre
+cat > /etc/tik/modules/pre/50-tcbl-wallpaper <<'WALLMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: set the TechniComp installer wallpaper (centered logo on white).
+gsettings set org.gnome.desktop.background picture-uri 'file:///usr/share/backgrounds/tcbl/tcbl-installer.png' || true
+gsettings set org.gnome.desktop.background picture-uri-dark 'file:///usr/share/backgrounds/tcbl/tcbl-installer.png' || true
+gsettings set org.gnome.desktop.background picture-options 'zoom' || true
+gsettings set org.gnome.desktop.background primary-color '#ffffff' || true
+WALLMOD
 
 # TCBL reseal module: after tik's 15-encrypt enrols TPM2 with Aeon's 4,5,7,9,
 # re-seal to the stable 0,2,7 set. Runs after 15-encrypt (numbered 16), TPM
@@ -353,6 +372,15 @@ fi
 # the reboot-after-unlock behaviour seen on Aeon when a post-update PCR
 # prediction is stale: the disk still unlocks and boot reaches the desktop.
 cmdline+=("measure-pcr-validator.ignore=yes")
+
+# Installer safety: stop systemd from auto-mounting discoverable partitions
+# (root/home/var/...) or activating swap it finds on OTHER attached disks at
+# boot (systemd-gpt-auto-generator). On an install target that already has
+# partitions, that auto-mount holds the whole device busy and systemd-repart
+# fails with "device or resource busy". A wiped disk works; this makes any
+# disk work. TCBL boots from an explicit root=UUID + fstab, so it needs no
+# gpt auto-discovery itself, on the USB or the installed system.
+cmdline+=("systemd.gpt_auto=no")
 
 # Performance tuning (Source: notes Performance/Kernel Tuning.md, Storage and IO.md).
 # Full preemption, threaded IRQs and RCU no-callback/lazy for desktop latency;

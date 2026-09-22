@@ -63,6 +63,13 @@
              will not start. Name the provider explicitly. Swap this for
              tik-config-benchtop once that package exists. -->
         <package name="tik-config-generic"/>
+        <!-- Tools the vendored tik installer modules use at install time
+             (root/usr/lib/tik/modules/): TPM2 detect/enroll, recovery-key QR,
+             SecureBoot state, laptop AC-power check. -->
+        <package name="tpm2.0-tools"/>
+        <package name="qrencode"/>
+        <package name="mokutil"/>
+        <package name="upower"/>
         <!-- Performance services (Source: notes Performance/*). rtkit provides
              rtkit-daemon; systemd-experimental provides systemd-oomd on openSUSE. -->
         <package name="rtkit"/>
