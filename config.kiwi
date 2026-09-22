@@ -70,6 +70,8 @@
         <package name="qrencode"/>
         <package name="mokutil"/>
         <package name="upower"/>
+        <!-- Wi-Fi backend, explicit (NetworkManager-wifi also pulls it) -->
+        <package name="wpa_supplicant"/>
         <!-- Performance services (Source: notes Performance/*). rtkit provides
              rtkit-daemon; systemd-experimental provides systemd-oomd on openSUSE. -->
         <package name="rtkit"/>
