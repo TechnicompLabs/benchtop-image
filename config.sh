@@ -38,6 +38,30 @@ echo FONT="eurlatgr.psfu" >> /etc/vconsole.conf
 # image, matched against the OBS build time, proves whether a burn is current.
 echo "TCBL $(date -u +%FT%TZ)" > /usr/lib/tc-benchtop-build-id
 
+# TCBL OS branding: rebrand os-release NAME/PRETTY_NAME so the installed system
+# identifies as TechniComp Benchtop Linux (GNOME Tour/About, etc.). ID is left at
+# the base openSUSE value so tooling and the sdbootutil entry token keep working.
+if [ -f /usr/lib/os-release ]; then
+    sed -i -e 's/^NAME=.*/NAME="TechniComp Benchtop Linux"/' \
+           -e 's/^PRETTY_NAME=.*/PRETTY_NAME="TechniComp Benchtop Linux"/' \
+           /usr/lib/os-release
+fi
+
+# TCBL default desktop wallpaper for the installed system AND the installer
+# session: system-wide GNOME background default via a gschema override (90- so it
+# wins over gnome-backgrounds' default).
+mkdir -p /usr/share/glib-2.0/schemas
+cat > /usr/share/glib-2.0/schemas/90-tcbl-background.gschema.override <<'BGOVR'
+[org.gnome.desktop.background]
+picture-uri='file:///usr/share/backgrounds/tcbl/tcbl-installer.png'
+picture-uri-dark='file:///usr/share/backgrounds/tcbl/tcbl-installer.png'
+picture-options='zoom'
+primary-color='#ffffff'
+BGOVR
+if command -v glib-compile-schemas >/dev/null 2>&1; then
+    glib-compile-schemas /usr/share/glib-2.0/schemas/
+fi
+
 #======================================
 # prepare for setting root pw, timezone
 #--------------------------------------
@@ -293,6 +317,17 @@ RESEAL
 # Enable NetworkManager
 #--------------------------------------
 systemctl enable NetworkManager
+
+# Wi-Fi: NetworkManager's internal DHCP client (no external dhclient dependency)
+# and the wpa_supplicant backend (not iwd).
+mkdir -p /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/10-tcbl.conf <<'NMCONF'
+[main]
+dhcp=internal
+
+[device]
+wifi.backend=wpa_supplicant
+NMCONF
 
 #======================================
 # Enable the display manager (graphical login)
