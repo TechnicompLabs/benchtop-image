@@ -289,6 +289,54 @@ gsettings set org.gnome.desktop.background picture-options 'zoom' || true
 gsettings set org.gnome.desktop.background primary-color '#ffffff' || true
 WALLMOD
 
+# TCBL installer fix: retry the self-deploy systemd-repart (custom tik pre
+# module). See the module header for the full rationale.
+mkdir -p /etc/tik/modules/pre
+cat > /etc/tik/modules/pre/90-tcbl-repart-retry <<'RETRYMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: retry the self-deploy systemd-repart, as upstream tik already does for
+# its image-bundle path (dump_image_repart_image in tik-core-helper).
+#
+# On a disk that still holds partitions from a previous install, repart can fail
+# with "Failed to create new partition '<disk>p1': Device or resource busy": the
+# kernel still has the old partition registered for a moment while udev
+# re-probes the disk after repart wipes it. That failed attempt leaves the disk
+# blank, and the next attempt succeeds.
+#
+# This file redefines dump_image_repart_self from tik-core-helper. tik sources
+# its helpers before loading modules, so this definition is the one dump_image
+# calls. It is upstream's function with the single fatal `prun` call replaced by
+# upstream's own retry loop, plus a udev settle before each attempt. Re-sync this
+# copy if a tik update changes dump_image_repart_self.
+dump_image_repart_self() {
+    local image_target=$1
+    local success=0
+    local max_attempts=5
+    local attempt_num=1
+
+    create_keyfile
+    log "[dump_image_repart_self] self-deploying (TCBL retry)"
+
+    while [ ${success} = 0 ] && [ ${attempt_num} -lt ${max_attempts} ]; do
+        prun-opt udevadm settle --timeout=30
+        prun-opt rm -rf /etc/fstab.repart
+        prun-opt systemd-repart --no-pager --pretty=0 --empty=force --dry-run=no --key-file="${tik_keyfile}" --generate-fstab=/etc/fstab.repart "${image_target}" > >(d --progress --title="Installing ${TIK_OS_NAME}" --text="Deploying OS Image" --pulsate --auto-close --no-cancel --width=400)
+        if [ ${retval} -eq 0 ]; then
+            success=1
+        else
+            log "[dump_image_repart_self] systemd-repart attempt ${attempt_num} failed. Trying again..."
+            sleep 1
+            attempt_num=$(( attempt_num + 1 ))
+        fi
+    done
+    if [ ${success} = 1 ]; then
+        log "[dump_image_repart_self] systemd-repart succeeded after ${attempt_num} attempts"
+    else
+        error "systemd-repart failed"
+    fi
+}
+RETRYMOD
+
 # TCBL reseal module: after tik's 15-encrypt enrols TPM2 with Aeon's 4,5,7,9,
 # re-seal to the stable 0,2,7 set. Runs after 15-encrypt (numbered 16), TPM
 # (Default) mode only. If this step is skipped or fails the system stays on
@@ -407,15 +455,6 @@ fi
 # the reboot-after-unlock behaviour seen on Aeon when a post-update PCR
 # prediction is stale: the disk still unlocks and boot reaches the desktop.
 cmdline+=("measure-pcr-validator.ignore=yes")
-
-# Installer safety: stop systemd from auto-mounting discoverable partitions
-# (root/home/var/...) or activating swap it finds on OTHER attached disks at
-# boot (systemd-gpt-auto-generator). On an install target that already has
-# partitions, that auto-mount holds the whole device busy and systemd-repart
-# fails with "device or resource busy". A wiped disk works; this makes any
-# disk work. TCBL boots from an explicit root=UUID + fstab, so it needs no
-# gpt auto-discovery itself, on the USB or the installed system.
-cmdline+=("systemd.gpt_auto=no")
 
 # Performance tuning (Source: notes Performance/Kernel Tuning.md, Storage and IO.md).
 # Full preemption, threaded IRQs and RCU no-callback/lazy for desktop latency;
