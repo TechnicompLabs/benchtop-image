@@ -490,10 +490,11 @@ if [ "${tik_encrypt_mode}" == 0 ]; then
 fi
 RESEAL
 
-# TCBL live-USB tik modules. 01-tcbl-exit and 12-tcbl-machine-id must run before
-# particular vendored modules (10-welcome, 15-encrypt), and tik loads
-# /usr/lib/tik/modules/<phase> before /etc/tik/modules/<phase>, so those two sit
-# beside the vendored modules. 17-tcbl-live-cleanup has no ordering need.
+# TCBL live-USB tik modules. 01-tcbl-exit, 12-tcbl-machine-id and
+# 13-tcbl-no-memtest must run before particular vendored modules (10-welcome,
+# 15-encrypt), and tik loads /usr/lib/tik/modules/<phase> before
+# /etc/tik/modules/<phase>, so those three sit beside the vendored modules.
+# 17-tcbl-live-cleanup has no ordering need.
 mkdir -p /usr/lib/tik/modules/pre /usr/lib/tik/modules/post
 cat > /usr/lib/tik/modules/pre/01-tcbl-exit <<'EXITMOD'
 # SPDX-License-Identifier: MIT
@@ -539,6 +540,21 @@ prun /usr/bin/tee "${TIK_ROOT_MNT}/etc/machine-id" <<< "${new_machine_id}" > /de
 prun /usr/bin/rm -f "${TIK_ROOT_MNT}/var/lib/systemd/random-seed" "${TIK_ROOT_MNT}/var/lib/zypp/AnonymousUniqueId"
 tik_progress_step "Machine ID generated" 100
 IDMOD
+
+cat > /usr/lib/tik/modules/post/13-tcbl-no-memtest <<'MEMTESTMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: memtest86+ is in the installer USB's boot menu only. The image carries
+# memtest86+-bls, whose /usr/lib/sdbootutil/entries.d/memtest86+.conf would
+# also put memtest86+ in the installed system's boot menu. A file of the same
+# name in /etc/sdbootutil/entries.d replaces it, and this one has no EFI= line,
+# so sdbootutil installs nothing for it. Runs before 15-encrypt, whose
+# `sdbootutil install` fills the installed system's ESP. To offer memtest86+
+# on an installed system, delete the file and run `sdbootutil update`.
+tik_target_mount "" "required"
+log "[tcbl-no-memtest] masking the memtest86+ boot entry on the installed system"
+prun /usr/bin/mkdir -p "${TIK_ROOT_MNT}/etc/sdbootutil/entries.d"
+prun /usr/bin/tee "${TIK_ROOT_MNT}/etc/sdbootutil/entries.d/memtest86+.conf" <<< "# TCBL: no memtest86+ boot entry on installed systems (see /usr/lib/sdbootutil/entries.d/memtest86+.conf)" > /dev/null
+MEMTESTMOD
 
 cat > /etc/tik/modules/post/17-tcbl-live-cleanup <<'CLEANMOD'
 # SPDX-License-Identifier: MIT

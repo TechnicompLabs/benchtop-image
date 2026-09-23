@@ -20,6 +20,14 @@ sdbootutil -v --secure-boot --no-random-seed --arch "$arch" --esp-path /boot/efi
 echo "add kernels"
 export hostonly_l=no # for dracut
 sdbootutil -v --arch "$arch" --esp-path /boot/efi --portable --entry-token=auto add-all-kernels
+echo "boot menu"
+# TCBL: `sdbootutil install` above also added memtest86+ to this USB's boot
+# menu, from memtest86+-bls (installed systems mask it; see the tik post module
+# 13-tcbl-no-memtest in config.sh). Show the menu for 5 seconds, and keep the
+# OS entries the default however the memtest86+ entry sorts.
+entry_token="$(cat /etc/kernel/entry-token)"
+sed -i -e '/^#\?timeout /d' -e '/^default /d' /boot/efi/loader/loader.conf
+printf 'timeout 5\ndefault %s-*\n' "$entry_token" >> /boot/efi/loader/loader.conf
 echo "##### AFTER ####"
 rm -f /boot/mbrid
 find /boot
