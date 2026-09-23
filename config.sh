@@ -150,27 +150,30 @@ mkdir -p /ignition
 #======================================
 # Installer (tik) wiring
 #--------------------------------------
-# Autologin into the tik session off the installer USB. tik's 10-sicu module
-# clears this on the installed target, so only the USB runs the installer.
+# No autologin: the USB boots to the GDM login screen, which lists
+# "Install Benchtop" (the tik account) and "Create User" (see "Live USB login
+# screen" below). tik's 10-sicu module also clears autologin on the installed
+# target.
 if [ -e /etc/sysconfig/displaymanager ]; then
-	sed -i 's/^DISPLAYMANAGER_AUTOLOGIN=.*/DISPLAYMANAGER_AUTOLOGIN="tik"/' /etc/sysconfig/displaymanager
-	grep -q '^DISPLAYMANAGER_AUTOLOGIN=' /etc/sysconfig/displaymanager || echo 'DISPLAYMANAGER_AUTOLOGIN="tik"' >> /etc/sysconfig/displaymanager
+	sed -i 's/^DISPLAYMANAGER_AUTOLOGIN=.*/DISPLAYMANAGER_AUTOLOGIN=""/' /etc/sysconfig/displaymanager
+	grep -q '^DISPLAYMANAGER_AUTOLOGIN=' /etc/sysconfig/displaymanager || echo 'DISPLAYMANAGER_AUTOLOGIN=""' >> /etc/sysconfig/displaymanager
 else
 	mkdir -p /etc/sysconfig
-	echo 'DISPLAYMANAGER_AUTOLOGIN="tik"' > /etc/sysconfig/displaymanager
+	echo 'DISPLAYMANAGER_AUTOLOGIN=""' > /etc/sysconfig/displaymanager
 fi
 
 #======================================
 # Installer session: tik user + GNOME autostart (self-deploy USB only)
 #--------------------------------------
-# Autologin (DISPLAYMANAGER_AUTOLOGIN="tik", set above) logs the "tik" user
-# into the normal GNOME session; a GNOME autostart entry then launches
+# Choosing "Install Benchtop" (the tik account's full name) on the login screen
+# logs the "tik" user into the normal GNOME session without a password (see
+# "Live USB login screen" below); a GNOME autostart entry then launches
 # /usr/bin/tik. tik's 10-sicu post module removes all of this on the deployed
 # target, so only the USB runs the installer. Mirrors the "tik specifics" block
 # of devel:microos:aeon:images/Aeon config.sh, rebranded for TCBL. Requires a
 # full GNOME session (gdm + gnome-shell + gnome-session-wayland) in the image.
 groupadd -f wheel
-useradd -m tik
+useradd -m -c "Install Benchtop" tik
 usermod -aG wheel tik
 
 cat > /etc/sudoers.d/51-tik << "EOF"
@@ -210,6 +213,147 @@ echo "file:///ignition" >> /home/tik/.config/gtk-3.0/bookmarks
 echo yes > /home/tik/.config/gnome-initial-setup-done
 
 chown -R tik:users /home/tik
+
+#======================================
+# Live USB login screen (self-deploy USB only)
+#--------------------------------------
+# The USB boots to GDM, which lists two passwordless accounts:
+#   "Install Benchtop" (tik)       the installer session (tik autostarts)
+#   "Create User" (tcbl-newuser)   asks for a new account's details, creates it
+#                                  as an administrator, then logs out
+# Accounts made with "Create User" are for using the USB as a live system. The
+# installer copies them, with their home folders, into every system installed
+# from the USB. Once an account exists, "Create User" is hidden from the login
+# screen. On the installed system, tik's 10-sicu removes tik, and the TCBL
+# 17-tcbl-live-cleanup post module removes tcbl-newuser and the rules below.
+
+# "Create User" account; its session runs only the account-creation dialog.
+useradd -m -c "Create User" tcbl-newuser
+mkdir -p /home/tcbl-newuser/.config/autostart
+cat > /home/tcbl-newuser/.config/autostart/org.technicomp.create-user.desktop << "EOF"
+[Desktop Entry]
+Type=Application
+Name=Create User
+Exec=/usr/libexec/tcbl/create-user-dialog
+NoDisplay=true
+EOF
+echo yes > /home/tcbl-newuser/.config/gnome-initial-setup-done
+chown -R tcbl-newuser: /home/tcbl-newuser
+
+# GNOME's login screen does not list locked accounts, and useradd creates both
+# accounts locked ('!' in /etc/shadow). Give each a random password that is
+# never shown or stored anywhere; they log in through the GDM rule below.
+for account in tik tcbl-newuser; do
+	{ printf '%s:' "${account}"; head -c 32 /dev/urandom | base64; } | chpasswd
+done
+
+# Passwordless login from the GDM login screen for these two accounts only.
+# openSUSE ships gdm's PAM configuration in /usr/lib/pam.d, and a file of the
+# same name in /etc/pam.d replaces it, so copy the packaged file with the rule
+# added first. 17-tcbl-live-cleanup deletes this copy on the installed system,
+# which then uses the packaged file again.
+if [ -f /usr/lib/pam.d/gdm-password ] && [ ! -e /etc/pam.d/gdm-password ]; then
+	awk -v rule='auth     sufficient     pam_succeed_if.so quiet user in tik:tcbl-newuser' '
+		NR == 1 && /^#%PAM/ { print; print rule; next }
+		NR == 1 { print rule }
+		{ print }' /usr/lib/pam.d/gdm-password > /etc/pam.d/gdm-password
+else
+	echo "WARNING (TCBL): /usr/lib/pam.d/gdm-password missing or /etc/pam.d/gdm-password present; passwordless GDM login NOT configured"
+fi
+
+# The dialog runs as tcbl-newuser. Creating the account needs root, so that
+# account may run exactly one root helper, with no arguments.
+cat > /etc/sudoers.d/52-tcbl-newuser << "EOF"
+tcbl-newuser ALL = (root) NOPASSWD: /usr/libexec/tcbl/create-user ""
+EOF
+chmod 0440 /etc/sudoers.d/52-tcbl-newuser
+visudo -cf /etc/sudoers.d/52-tcbl-newuser
+
+mkdir -p /usr/libexec/tcbl
+cat > /usr/libexec/tcbl/create-user << "EOF"
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# TCBL live USB: create an administrator account for the "Create User" session,
+# then hide "Create User" from the login screen. Runs as root via sudo (see
+# /etc/sudoers.d/52-tcbl-newuser). Reads three lines on stdin: username, full
+# name, password. Exit status: 0 created, 2 invalid input, 3 username in use.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+IFS= read -r username
+IFS= read -r fullname
+IFS= read -r password || [ -n "${password}" ]
+
+[[ "${username}" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || exit 2
+[[ -n "${fullname}" && ${#fullname} -le 128 && "${fullname}" != *[:[:cntrl:]]* ]] || exit 2
+[ -n "${password}" ] || exit 2
+if getent passwd "${username}" > /dev/null; then
+	exit 3
+fi
+
+accounts=(org.freedesktop.Accounts /org/freedesktop/Accounts org.freedesktop.Accounts)
+
+# Create the account the way GNOME Settings and GNOME Initial Setup do: through
+# AccountsService, as an administrator (account type 1).
+busctl call "${accounts[@]}" CreateUser ssi "${username}" "${fullname}" 1 > /dev/null
+printf '%s:%s\n' "${username}" "${password}" | chpasswd
+
+# Hide "Create User": lock tcbl-newuser through AccountsService. GNOME's login
+# screen drops locked accounts from its list, including while it is running.
+read -r _ path < <(busctl call "${accounts[@]}" FindUserByName s tcbl-newuser)
+busctl call org.freedesktop.Accounts "${path//\"/}" org.freedesktop.Accounts.User SetLocked b true
+EOF
+
+cat > /usr/libexec/tcbl/create-user-dialog << "EOF"
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# TCBL live USB: the "Create User" session. Asks for the new account's details,
+# creates it through /usr/libexec/tcbl/create-user, then logs out so the new
+# account can be chosen on the login screen. Cancelling also logs out.
+title="Create User"
+
+end_session() {
+	gnome-session-quit --logout --no-prompt || loginctl terminate-user "$(id -un)"
+	exit 0
+}
+
+while true; do
+	form=$(zenity --forms --title="${title}" --width=440 \
+		--text="Create an account for using TechniComp Benchtop Linux from this USB drive. Any system installed from this drive will include it." \
+		--separator=$'\n' \
+		--add-entry="Full name" --add-entry="Username" \
+		--add-password="Password" --add-password="Confirm password") || end_session
+	mapfile -t field <<< "${form}"
+	fullname=${field[0]:-}
+	username=${field[1]:-}
+	password=${field[2]:-}
+	confirm=${field[3]:-}
+
+	problem=""
+	if [ -z "${fullname}" ] || [[ "${fullname}" == *:* ]]; then
+		problem="Enter a full name. It cannot contain a colon."
+	elif ! [[ "${username}" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+		problem="Enter a username of up to 32 characters: lowercase letters, digits, hyphens and underscores, starting with a letter."
+	elif getent passwd "${username}" > /dev/null; then
+		problem="The username ${username} is already in use."
+	elif [ -z "${password}" ]; then
+		problem="Enter a password."
+	elif [ "${password}" != "${confirm}" ]; then
+		problem="The passwords do not match."
+	fi
+	if [ -n "${problem}" ]; then
+		zenity --error --no-markup --title="${title}" --text="${problem}"
+		continue
+	fi
+
+	if printf '%s\n%s\n%s\n' "${username}" "${fullname}" "${password}" | sudo -n /usr/libexec/tcbl/create-user; then
+		zenity --info --no-markup --title="${title}" --text="The account for ${fullname} is ready. Choose it on the login screen to start using it."
+		end_session
+	fi
+	zenity --error --no-markup --title="${title}" --text="The account could not be created."
+done
+EOF
+chmod 0755 /usr/libexec/tcbl/create-user /usr/libexec/tcbl/create-user-dialog
 
 # tik configuration
 mkdir -p /etc/tik
@@ -346,6 +490,81 @@ if [ "${tik_encrypt_mode}" == 0 ]; then
 fi
 RESEAL
 
+# TCBL live-USB tik modules. 01-tcbl-exit and 12-tcbl-machine-id must run before
+# particular vendored modules (10-welcome, 15-encrypt), and tik loads
+# /usr/lib/tik/modules/<phase> before /etc/tik/modules/<phase>, so those two sit
+# beside the vendored modules. 17-tcbl-live-cleanup has no ordering need.
+mkdir -p /usr/lib/tik/modules/pre /usr/lib/tik/modules/post
+cat > /usr/lib/tik/modules/pre/01-tcbl-exit <<'EXITMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: when the installer is cancelled or fails, return to the login screen
+# instead of powering off, since the USB may also be in use as a live system.
+# Redefines cleanup() from /usr/bin/tik: tik runs it from its EXIT trap, which
+# looks the function up when it fires, so this definition replaces upstream's.
+# Upstream's failure branch shows a second "Installation Failed" dialog and
+# powers off; error() has already shown the specific error by then, and a
+# cancel has already been confirmed. Lines marked TCBL differ from upstream;
+# re-sync the rest if tik's cleanup() changes.
+cleanup() {
+    retval=$?
+    log "[STOP][${retval}] $0"
+    if [ "${debug}" == "1" ]; then
+        d --timeout 5 --info --no-wrap --text="<b>Test Succeeded:</b>\n\nHave a nice day!"
+    elif [ "${retval}" == "0" ]; then
+        d --timeout 5 --info --no-wrap --title="Installation Complete!" --text="${TIK_OS_NAME} has been installed.\n\n<b>System is rebooting</b>"
+        prun systemctl reboot --force
+    else
+        tik_cleanup_mounts                     # TCBL: release the target disk so a retry works
+        cp -a ${tik_log} /ignition
+        loginctl terminate-user "$(id -un)"    # TCBL: back to the login screen, not poweroff
+    fi
+}
+EXITMOD
+
+cat > /usr/lib/tik/modules/post/12-tcbl-machine-id <<'IDMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: give the installed system its own identity. The installer copies /etc
+# and /var from the running USB, so every system installed from one USB would
+# otherwise share the USB's machine ID. Resets the same per-machine files that
+# config.sh deletes at image build time. Runs after 10-sicu (target mounted)
+# and before 15-encrypt, so the initrd built there carries the new machine ID.
+# Boot entries are unaffected: sdbootutil names them from
+# /etc/kernel/entry-token (the OS ID), not from the machine ID.
+tik_target_mount "" "required"
+tik_progress_step "Generating a machine ID" 0
+new_machine_id="$(systemd-id128 new)"
+[[ "${new_machine_id}" =~ ^[0-9a-f]{32}$ ]] || error "Could not generate a machine ID"
+log "[tcbl-machine-id] writing a new machine ID; clearing the random seed and zypp ID"
+prun /usr/bin/tee "${TIK_ROOT_MNT}/etc/machine-id" <<< "${new_machine_id}" > /dev/null
+prun /usr/bin/rm -f "${TIK_ROOT_MNT}/var/lib/systemd/random-seed" "${TIK_ROOT_MNT}/var/lib/zypp/AnonymousUniqueId"
+tik_progress_step "Machine ID generated" 100
+IDMOD
+
+cat > /etc/tik/modules/post/17-tcbl-live-cleanup <<'CLEANMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: remove the live USB's login-screen setup from the installed system.
+# 10-sicu removes the tik account; this removes the "Create User" account, its
+# sudo rule, the passwordless GDM login rule and both accounts' AccountsService
+# records. Accounts made with "Create User" are kept.
+tik_target_mount "" "required"
+tik_progress_step "Removing live USB accounts" 0
+log "[tcbl-live-cleanup] removing tcbl-newuser, its sudo rule and the passwordless GDM rule"
+prun /usr/bin/chroot "${TIK_ROOT_MNT}" userdel -r tcbl-newuser
+prun /usr/bin/rm -f "${TIK_ROOT_MNT}/etc/sudoers.d/52-tcbl-newuser" \
+    "${TIK_ROOT_MNT}/var/lib/AccountsService/users/tik" \
+    "${TIK_ROOT_MNT}/var/lib/AccountsService/users/tcbl-newuser" \
+    "${TIK_ROOT_MNT}/var/lib/AccountsService/icons/tik" \
+    "${TIK_ROOT_MNT}/var/lib/AccountsService/icons/tcbl-newuser"
+# config.sh made /etc/pam.d/gdm-password as a copy of the packaged
+# /usr/lib/pam.d/gdm-password plus the rule, so deleting the copy restores the
+# packaged file. Only delete it if it is TCBL's copy.
+prun-opt /usr/bin/grep -q 'user in tik:tcbl-newuser' "${TIK_ROOT_MNT}/etc/pam.d/gdm-password"
+if [ "${retval}" = "0" ]; then
+    prun /usr/bin/rm -f "${TIK_ROOT_MNT}/etc/pam.d/gdm-password"
+fi
+tik_progress_step "Live USB accounts removed" 100
+CLEANMOD
+
 #======================================
 # Enable NetworkManager
 #--------------------------------------
@@ -376,6 +595,24 @@ sed -i 's/^DISPLAYMANAGER=.*/DISPLAYMANAGER="gdm"/' /etc/sysconfig/displaymanage
 grep -q '^DISPLAYMANAGER=' /etc/sysconfig/displaymanager || echo 'DISPLAYMANAGER="gdm"' >> /etc/sysconfig/displaymanager
 mkdir -p /etc/systemd/system/graphical.target.wants
 ln -sf /usr/lib/systemd/system/display-manager.service /etc/systemd/system/graphical.target.wants/display-manager.service
+
+# GDM login screen logo: the light TechniComp mark, for GDM's dark background.
+# GDM shows it at the bottom of the login screen, scaled to 48 px high
+# (org.gnome.login-screen logo). Set in the gdm system dconf database, which
+# takes precedence over GDM's packaged greeter defaults. Installed systems keep it.
+mkdir -p /etc/dconf/db/gdm.d
+cat > /etc/dconf/db/gdm.d/10-tcbl-logo << "EOF"
+[org/gnome/login-screen]
+logo='/usr/share/pixmaps/tcbl-login-logo.png'
+EOF
+gdm_profile=/etc/dconf/profile/gdm
+[ -f "${gdm_profile}" ] || gdm_profile=/usr/share/dconf/profile/gdm
+if ! grep -qsx 'system-db:gdm' "${gdm_profile}"; then
+	# Not expected (GDM's packaged profile includes it); use GNOME's documented profile.
+	mkdir -p /etc/dconf/profile
+	printf '%s\n' 'user-db:user' 'system-db:gdm' 'file-db:/usr/share/gdm/greeter-dconf-defaults' > /etc/dconf/profile/gdm
+fi
+dconf update
 
 #======================================
 # Enable performance services
