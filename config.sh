@@ -148,21 +148,6 @@ mkdir -p /ignition
 # prediction never halts the boot even if the reseal is skipped.
 
 #======================================
-# Installer (tik) wiring
-#--------------------------------------
-# No autologin: the USB boots to the GDM login screen, which lists
-# "Install Benchtop" (the tik account) and "Create User" (see "Live USB login
-# screen" below). tik's 10-sicu module also clears autologin on the installed
-# target.
-if [ -e /etc/sysconfig/displaymanager ]; then
-	sed -i 's/^DISPLAYMANAGER_AUTOLOGIN=.*/DISPLAYMANAGER_AUTOLOGIN=""/' /etc/sysconfig/displaymanager
-	grep -q '^DISPLAYMANAGER_AUTOLOGIN=' /etc/sysconfig/displaymanager || echo 'DISPLAYMANAGER_AUTOLOGIN=""' >> /etc/sysconfig/displaymanager
-else
-	mkdir -p /etc/sysconfig
-	echo 'DISPLAYMANAGER_AUTOLOGIN=""' > /etc/sysconfig/displaymanager
-fi
-
-#======================================
 # Installer session: tik user + GNOME autostart (self-deploy USB only)
 #--------------------------------------
 # Choosing "Install Benchtop" (the tik account's full name) on the login screen
@@ -170,9 +155,9 @@ fi
 # "Live USB login screen" below); a GNOME autostart entry then launches
 # /usr/bin/tik. tik's 10-sicu post module removes all of this on the deployed
 # target, so only the USB runs the installer. Mirrors the "tik specifics" block
-# of devel:microos:aeon:images/Aeon config.sh, rebranded for TCBL. Requires a
-# full GNOME session (gdm + gnome-shell + gnome-session-wayland) in the image.
-groupadd -f wheel
+# of devel:microos:aeon:images/Aeon config.sh, rebranded for TCBL and without
+# its tik autologin. Requires a full GNOME session (gdm + gnome-shell +
+# gnome-session-wayland) in the image.
 useradd -m -c "Install Benchtop" tik
 usermod -aG wheel tik
 
@@ -420,19 +405,6 @@ CopyFiles=/usr/local:/@/usr/local
 Encrypt=key-file
 REPART
 
-# TCBL installer wallpaper (custom tik pre module). Runs after the vendored
-# pre/05-setup-gnome-env (which disables the installer screen lock) and sets the
-# TechniComp branded background for the tik session.
-mkdir -p /etc/tik/modules/pre
-cat > /etc/tik/modules/pre/50-tcbl-wallpaper <<'WALLMOD'
-# SPDX-License-Identifier: MIT
-# TCBL: set the TechniComp installer wallpaper (centered logo on white).
-gsettings set org.gnome.desktop.background picture-uri 'file:///usr/share/backgrounds/tcbl/tcbl-installer.png' || true
-gsettings set org.gnome.desktop.background picture-uri-dark 'file:///usr/share/backgrounds/tcbl/tcbl-installer.png' || true
-gsettings set org.gnome.desktop.background picture-options 'zoom' || true
-gsettings set org.gnome.desktop.background primary-color '#ffffff' || true
-WALLMOD
-
 # TCBL installer fix: start the self-deploy from a blank, settled disk (custom
 # tik pre module). See the module header for the full rationale.
 mkdir -p /etc/tik/modules/pre
@@ -586,31 +558,9 @@ CLEANMOD
 #--------------------------------------
 systemctl enable NetworkManager
 
-# Wi-Fi: NetworkManager's internal DHCP client (no external dhclient dependency)
-# and the wpa_supplicant backend (not iwd).
-mkdir -p /etc/NetworkManager/conf.d
-cat > /etc/NetworkManager/conf.d/10-tcbl.conf <<'NMCONF'
-[main]
-dhcp=internal
-
-[device]
-wifi.backend=wpa_supplicant
-NMCONF
-
-#======================================
-# Enable the display manager (graphical login)
-#--------------------------------------
-# graphical.target is the default (baseSetRunlevel above), but the display
-# manager still has to be wired in, and openSUSE makes that fiddly: it selects
-# the DM via /etc/sysconfig/displaymanager and ships a generic, *symlinked*
-# display-manager.service, so `systemctl enable display-manager.service` refuses
-# it ("linked unit") and there is no gdm.service. Set the selector and create
-# the graphical.target want by hand -- exactly what enable does under the hood.
-# (Aeon gets this from systemd-presets-branding-Aeon, which TCBL dropped.)
-sed -i 's/^DISPLAYMANAGER=.*/DISPLAYMANAGER="gdm"/' /etc/sysconfig/displaymanager
-grep -q '^DISPLAYMANAGER=' /etc/sysconfig/displaymanager || echo 'DISPLAYMANAGER="gdm"' >> /etc/sysconfig/displaymanager
-mkdir -p /etc/systemd/system/graphical.target.wants
-ln -sf /usr/lib/systemd/system/display-manager.service /etc/systemd/system/graphical.target.wants/display-manager.service
+# DNS: tc-benchtop-settings hands NetworkManager's DNS to systemd-resolved
+# (90-tcbl-dns.conf). openSUSE's presets leave systemd-resolved disabled.
+systemctl enable systemd-resolved
 
 # GDM login screen logo: the light TechniComp mark, for GDM's dark background.
 # GDM shows it at the bottom of the login screen, scaled to 48 px high
@@ -621,13 +571,10 @@ cat > /etc/dconf/db/gdm.d/10-tcbl-logo << "EOF"
 [org/gnome/login-screen]
 logo='/usr/share/pixmaps/tcbl-login-logo.png'
 EOF
-gdm_profile=/etc/dconf/profile/gdm
-[ -f "${gdm_profile}" ] || gdm_profile=/usr/share/dconf/profile/gdm
-if ! grep -qsx 'system-db:gdm' "${gdm_profile}"; then
-	# Not expected (GDM's packaged profile includes it); use GNOME's documented profile.
-	mkdir -p /etc/dconf/profile
-	printf '%s\n' 'user-db:user' 'system-db:gdm' 'file-db:/usr/share/gdm/greeter-dconf-defaults' > /etc/dconf/profile/gdm
-fi
+# GDM's packaged profile (/usr/share/dconf/profile/gdm) has no system-db:gdm
+# line, so install the profile GNOME's administrator guide gives for this.
+mkdir -p /etc/dconf/profile
+printf '%s\n' 'user-db:user' 'system-db:gdm' 'file-db:/usr/share/gdm/greeter-dconf-defaults' > /etc/dconf/profile/gdm
 dconf update
 
 #======================================
@@ -753,9 +700,3 @@ systemctl mask systemd-growfs-root.service
 cat >> /etc/fstab.tik << "EOF"
 /etc /etc none bind,x-initrd.mount 0 0
 EOF
-
-#======================================
-
-# NOTE (TCBL): the Aeon tik-installer user block was intentionally dropped for
-# this minimal image. Deploy by writing the raw image to disk; ignition handles
-# first boot. The tik GUI installer + branding are a follow-up packaging task.
