@@ -72,6 +72,12 @@
         <package name="upower"/>
         <!-- Wi-Fi backend, explicit (NetworkManager-wifi also pulls it) -->
         <package name="wpa_supplicant"/>
+        <!-- memtest86+ in the installer USB's boot menu. memtest86+-bls ships
+             the sdbootutil boot entry (/usr/lib/sdbootutil/entries.d), which
+             disk.sh's `sdbootutil install` puts on the USB's ESP. Installed
+             systems mask it (tik post module 13-tcbl-no-memtest, config.sh). -->
+        <package name="memtest86+"/>
+        <package name="memtest86+-bls"/>
         <!-- Performance services (Source: notes Performance/*). rtkit provides
              rtkit-daemon; systemd-experimental provides systemd-oomd on openSUSE. -->
         <package name="rtkit"/>
