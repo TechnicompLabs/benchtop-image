@@ -141,11 +141,10 @@ mkdir -p /ignition
 # Full-disk encryption (install-time, via tik)
 #--------------------------------------
 # TCBL no longer encrypts in the initrd. The installer (tik + systemd-repart)
-# creates the LUKS2 root and sizes it at install time; tik enrols TPM2 or a
-# passphrase plus a recovery key. The TCBL reseal module below re-seals to the
-# stable PCR list 0,2,7. measure-pcr-validator.ignore=yes stays in the kernel
-# cmdline (added further down) and is copied onto the target, so a stale PCR
-# prediction never halts the boot even if the reseal is skipped.
+# creates the LUKS2 root and sizes it at install time; tik enrols TPM2 (sealed
+# to PCRs 4,5,7,9, as on Aeon) or a passphrase, plus a recovery key.
+# measure-pcr-validator.ignore=yes (added further down) is copied onto the
+# target, so the PCR 15 check after unlocking never halts the boot.
 
 #======================================
 # Installer session: tik user + GNOME autostart (self-deploy USB only)
@@ -438,30 +437,6 @@ dump_image_repart_self() {
 }
 PREPMOD
 
-# TCBL reseal module: after tik's 15-encrypt enrols TPM2 with Aeon's 4,5,7,9,
-# re-seal to the stable 0,2,7 set. Runs after 15-encrypt (numbered 16), TPM
-# (Default) mode only. If this step is skipped or fails the system stays on
-# 4,5,7,9, but the cmdline validator-ignore still prevents any halt.
-# VERIFY on a real install: tik custom-module ordering, the mount/keyfile state
-# after 15-encrypt, and that a second TPM2 enrol replaces the first policy.
-mkdir -p /etc/tik/modules/post
-cat > /etc/tik/modules/post/16-tcbl-reseal <<'RESEAL'
-# SPDX-License-Identifier: MIT
-# TCBL: re-seal the TPM2 policy to the stable PCR list 0,2,7, replacing tik's
-# default 4,5,7,9, so a kernel update never triggers a recovery-key prompt.
-if [ "${tik_encrypt_mode}" == 0 ]; then
-    tik_target_mount "" "required"
-    tik_progress_step "Re-sealing TPM to stable PCRs (0,2,7)" 90
-    log "[tcbl-reseal] setting FDE_SEAL_PCR_LIST=0,2,7 and re-enrolling TPM2"
-    echo "FDE_SEAL_PCR_LIST=0,2,7" | prun tee "${TIK_ROOT_MNT}/etc/sysconfig/fde-tools"
-    if ! prun /usr/bin/grep -q 'measure-pcr-validator.ignore=yes' "${TIK_ROOT_MNT}/etc/kernel/cmdline"; then
-        prun /usr/bin/sed -i -e 's,$, measure-pcr-validator.ignore=yes,' "${TIK_ROOT_MNT}/etc/kernel/cmdline"
-    fi
-    prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi --method=tpm2 enroll 1>&2
-    log "[tcbl-reseal] re-seal complete"
-fi
-RESEAL
-
 # TCBL live-USB tik modules. 01-tcbl-exit, 12-tcbl-machine-id and
 # 13-tcbl-no-memtest must run before particular vendored modules (10-welcome,
 # 15-encrypt), and tik loads /usr/lib/tik/modules/<phase> before
@@ -528,6 +503,7 @@ prun /usr/bin/mkdir -p "${TIK_ROOT_MNT}/etc/sdbootutil/entries.d"
 prun /usr/bin/tee "${TIK_ROOT_MNT}/etc/sdbootutil/entries.d/memtest86+.conf" <<< "# TCBL: no memtest86+ boot entry on installed systems (see /usr/lib/sdbootutil/entries.d/memtest86+.conf)" > /dev/null
 MEMTESTMOD
 
+mkdir -p /etc/tik/modules/post
 cat > /etc/tik/modules/post/17-tcbl-live-cleanup <<'CLEANMOD'
 # SPDX-License-Identifier: MIT
 # TCBL: remove the live USB's login-screen setup from the installed system.
