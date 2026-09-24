@@ -24,10 +24,12 @@ echo "boot menu"
 # TCBL: `sdbootutil install` above also added memtest86+ to this USB's boot
 # menu, from memtest86+-bls (installed systems mask it; see the tik post module
 # 13-tcbl-no-memtest in config.sh). Show the menu for 5 seconds, and keep the
-# OS entries the default however the memtest86+ entry sorts.
+# OS entries the default however the memtest86+ entry sorts. If an entry
+# fails to start, show the menu at once (systemd-boot's default restarts
+# while the entry has boot-count tries left).
 entry_token="$(cat /etc/kernel/entry-token)"
-sed -i -e '/^#\?timeout /d' -e '/^default /d' /boot/efi/loader/loader.conf
-printf 'timeout 5\ndefault %s-*\n' "$entry_token" >> /boot/efi/loader/loader.conf
+sed -i -e '/^#\?timeout /d' -e '/^default /d' -e '/^reboot-on-error /d' /boot/efi/loader/loader.conf
+printf 'timeout 5\ndefault %s-*\nreboot-on-error no\n' "$entry_token" >> /boot/efi/loader/loader.conf
 echo "##### AFTER ####"
 rm -f /boot/mbrid
 find /boot
