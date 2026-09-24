@@ -156,9 +156,11 @@ mkdir -p /ignition
 # target, so only the USB runs the installer. Mirrors the "tik specifics" block
 # of devel:microos:aeon:images/Aeon config.sh, rebranded for TCBL and without
 # its tik autologin. Requires a full GNOME session (gdm + gnome-shell +
-# gnome-session-wayland) in the image.
+# gnome-session-wayland) in the image. Unlike on Aeon, tik is not in wheel:
+# its sudo and polkit rights are granted by name below, and wheel would also
+# give it the SMBus access that tc-benchtop-settings reserves for
+# administrators.
 useradd -m -c "Install Benchtop" tik
-usermod -aG wheel tik
 
 cat > /etc/sudoers.d/51-tik << "EOF"
 tik ALL = (root) NOPASSWD: ALL
