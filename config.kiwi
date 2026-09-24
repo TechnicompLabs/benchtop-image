@@ -53,9 +53,7 @@
         <package name="patterns-tc-benchtop-base"/>
         <!-- Installer: tik (Aeon Tailored Installation Kit). Encryption and
              disk sizing happen at install time via systemd-repart + tik, not in
-             the initrd. VERIFY tik resolves in the build repos before relying on
-             this build; if it lives in an Aeon devel project, add that project as
-             a repository path. -->
+             the initrd. -->
         <package name="tik"/>
         <!-- tik requires the virtual "tik-config"; tik-config-Aeon and
              tik-config-generic both provide it, so OBS refuses to choose
