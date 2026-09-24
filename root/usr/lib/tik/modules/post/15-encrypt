@@ -75,6 +75,9 @@ configure_encryption() {
 
     # Install bootloader with sdbootutil
     prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi --no-variables install 1>&2
+    # TCBL: if an entry fails to start, show the boot menu at once (systemd-boot's
+    # default restarts while the entry has boot-count tries left)
+    echo "reboot-on-error no" | prun tee -a "${TIK_ROOT_MNT}/boot/efi/loader/loader.conf"
 
     tik_progress_step "Enrolling recovery key" 40
     prun /usr/bin/chroot "${TIK_ROOT_MNT}" sdbootutil -vv --esp-path /boot/efi --method=recovery-key enroll 1>&2

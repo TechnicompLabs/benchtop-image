@@ -630,6 +630,13 @@ fi
 # prediction is stale: the disk still unlocks and boot reaches the desktop.
 cmdline+=("measure-pcr-validator.ignore=yes")
 
+# TCBL: no restart after a kernel panic while the system starts (Tumbleweed's
+# kernel restarts after 90 seconds). A new snapshot that panics would otherwise
+# restart into itself indefinitely, because systemd-boot keeps booting the
+# entry that sdbootutil made the default. tc-benchtop-settings'
+# tcbl-panic-restart.service sets a 5-second restart once the boot completes.
+cmdline+=("panic=0")
+
 # Performance tuning (Source: notes Performance/Kernel Tuning.md, Storage and IO.md).
 # Full preemption, threaded IRQs and RCU no-callback/lazy for desktop latency;
 # disable the NMI/hardware watchdog; skip staggered SATA spin-up at boot.
