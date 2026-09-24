@@ -610,6 +610,13 @@ echo '[main]' > /usr/etc/zypp/zypp.conf.d/singletrans.conf
 echo 'techpreview.ZYPP_SINGLE_RPMTRANS=1' >> /usr/etc/zypp/zypp.conf.d/singletrans.conf
 
 #======================================
+# TCBL package repository
+#--------------------------------------
+# tc-benchtop-settings adds the repository (repo-tcbl) and ships its signing key;
+# importing the key lets zypper use the repository without asking.
+rpm --import /usr/lib/rpm/gnupg/keys/gpg-pubkey-9f72b2da-68976fe8.asc
+
+#======================================
 # Add default kernel boot options
 #--------------------------------------
 # TCBL: no serial console. Aeon, like MicroOS, adds console=ttyS0,115200
