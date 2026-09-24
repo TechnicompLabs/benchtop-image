@@ -612,9 +612,13 @@ echo 'techpreview.ZYPP_SINGLE_RPMTRANS=1' >> /usr/etc/zypp/zypp.conf.d/singletra
 #======================================
 # Add default kernel boot options
 #--------------------------------------
-serialconsole='console=ttyS0,115200'
+# TCBL: no serial console. Aeon, like MicroOS, adds console=ttyS0,115200
+# console=tty0 for servers and VMs; without console= the kernel uses the screen.
+cmdline=('quiet' 'loglevel=2' 'systemd.show_status=0' 'vt.global_cursor_default=0')
 
-cmdline=('quiet' 'loglevel=2' 'systemd.show_status=0' "${serialconsole}" 'console=tty0' 'vt.global_cursor_default=0')
+# TCBL: Plymouth shows its splash, and its graphical disk-password prompt, only
+# with "splash" on the kernel command line; without it, it prints boot messages.
+cmdline+=("splash")
 
 ignition_platform='metal'
 
