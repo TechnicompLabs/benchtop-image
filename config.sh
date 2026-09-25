@@ -39,27 +39,12 @@ echo FONT="eurlatgr.psfu" >> /etc/vconsole.conf
 echo "TCBL $(date -u +%FT%TZ)" > /usr/lib/tc-benchtop-build-id
 
 # TCBL OS branding: rebrand os-release NAME/PRETTY_NAME so the installed system
-# identifies as TechniComp Benchtop Linux (GNOME Tour/About, etc.). ID is left at
+# identifies as Technicomp Benchtop Linux (GNOME Tour/About, etc.). ID is left at
 # the base openSUSE value so tooling and the sdbootutil entry token keep working.
 if [ -f /usr/lib/os-release ]; then
-    sed -i -e 's/^NAME=.*/NAME="TechniComp Benchtop Linux"/' \
-           -e 's/^PRETTY_NAME=.*/PRETTY_NAME="TechniComp Benchtop Linux"/' \
+    sed -i -e 's/^NAME=.*/NAME="Technicomp Benchtop Linux"/' \
+           -e 's/^PRETTY_NAME=.*/PRETTY_NAME="Technicomp Benchtop Linux"/' \
            /usr/lib/os-release
-fi
-
-# TCBL default desktop wallpaper for the installed system AND the installer
-# session: system-wide GNOME background default via a gschema override (90- so it
-# wins over gnome-backgrounds' default).
-mkdir -p /usr/share/glib-2.0/schemas
-cat > /usr/share/glib-2.0/schemas/90-tcbl-background.gschema.override <<'BGOVR'
-[org.gnome.desktop.background]
-picture-uri='file:///usr/share/backgrounds/tcbl/tcbl-installer.png'
-picture-uri-dark='file:///usr/share/backgrounds/tcbl/tcbl-installer.png'
-picture-options='zoom'
-primary-color='#ffffff'
-BGOVR
-if command -v glib-compile-schemas >/dev/null 2>&1; then
-    glib-compile-schemas /usr/share/glib-2.0/schemas/
 fi
 
 #======================================
@@ -179,8 +164,8 @@ chown tik:users /ignition
 mkdir -p /home/tik/.local/share/applications
 cat > /home/tik/.local/share/applications/org.technicomp.tik.desktop << "EOF"
 [Desktop Entry]
-Name=TechniComp Benchtop Linux Installer
-Comment=Installs TechniComp Benchtop Linux
+Name=Technicomp Benchtop Linux Installer
+Comment=Installs Technicomp Benchtop Linux
 Exec=/usr/bin/tik
 Icon=drive-harddisk
 Type=Application
@@ -305,7 +290,7 @@ end_session() {
 
 while true; do
 	form=$(zenity --forms --title="${title}" --width=440 \
-		--text="Create an account for using TechniComp Benchtop Linux from this USB drive. Any system installed from this drive will include it." \
+		--text="Create an account for using Technicomp Benchtop Linux from this USB drive. Any system installed from this drive will include it." \
 		--separator=$'\n' \
 		--add-entry="Full name" --add-entry="Username" \
 		--add-password="Password" --add-password="Confirm password") || end_session
@@ -344,8 +329,8 @@ chmod 0755 /usr/libexec/tcbl/create-user /usr/libexec/tcbl/create-user-dialog
 # tik configuration
 mkdir -p /etc/tik
 cat > /etc/tik/config <<'TIKCONF'
-# TechniComp Benchtop Linux tik configuration
-TIK_OS_NAME="TechniComp Benchtop Linux"
+# Technicomp Benchtop Linux tik configuration
+TIK_OS_NAME="Technicomp Benchtop Linux"
 # Upstream default is https://aeondesktop.org/reportbug; tik reads
 # /usr/lib/tik/config first and this file second, so this wins.
 TIK_BUG_URL="https://github.com/TechnicompLabs/benchtop-image/issues"
@@ -539,21 +524,6 @@ systemctl enable NetworkManager
 # DNS: tc-benchtop-settings hands NetworkManager's DNS to systemd-resolved
 # (90-tcbl-dns.conf). openSUSE's presets leave systemd-resolved disabled.
 systemctl enable systemd-resolved
-
-# GDM login screen logo: the light TechniComp mark, for GDM's dark background.
-# GDM shows it at the bottom of the login screen, scaled to 48 px high
-# (org.gnome.login-screen logo). Set in the gdm system dconf database, which
-# takes precedence over GDM's packaged greeter defaults. Installed systems keep it.
-mkdir -p /etc/dconf/db/gdm.d
-cat > /etc/dconf/db/gdm.d/10-tcbl-logo << "EOF"
-[org/gnome/login-screen]
-logo='/usr/share/pixmaps/tcbl-login-logo.png'
-EOF
-# GDM's packaged profile (/usr/share/dconf/profile/gdm) has no system-db:gdm
-# line, so install the profile GNOME's administrator guide gives for this.
-mkdir -p /etc/dconf/profile
-printf '%s\n' 'user-db:user' 'system-db:gdm' 'file-db:/usr/share/gdm/greeter-dconf-defaults' > /etc/dconf/profile/gdm
-dconf update
 
 #======================================
 # Enable performance services
