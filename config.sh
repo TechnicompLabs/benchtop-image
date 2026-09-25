@@ -335,6 +335,12 @@ TIK_OS_NAME="Technicomp Benchtop Linux"
 # /usr/lib/tik/config first and this file second, so this wins.
 TIK_BUG_URL="https://github.com/TechnicompLabs/benchtop-image/issues"
 # USB devices are filtered out of the install-target list by default.
+# Name of the unlocked root device (/dev/mapper/benchtop_root, /etc/crypttab).
+# Without it, tik derives the name from TIK_OS_NAME, as
+# technicomp_benchtop_linux_root. The root partition carries the same name as
+# its label (repart.d/50-root.conf below), so the text password prompt at boot
+# names the disk once, as benchtop_root.
+TIK_CRYPT_MAPPER="benchtop_root"
 TIKCONF
 
 # repart.d layout for tik self-deployment, taken verbatim from Aeon's
@@ -344,7 +350,9 @@ TIKCONF
 # CopyBlocks -- a btrfs-snapshot rootfs deploys per-file), then encrypts.
 # ExcludeFiles strips the tik installer artifacts (tik user, sudoers, polkit,
 # /ignition) from the deployed system. No ignition partition on the target;
-# Aeon's self-deploy layout has none.
+# Aeon's self-deploy layout has none. TCBL addition: Label=benchtop_root names
+# the root partition and its file system (systemd-repart's default is
+# root-x86-64); it matches TIK_CRYPT_MAPPER in the tik configuration above.
 mkdir -p /usr/lib/repart.d
 cat > /usr/lib/repart.d/00-esp.conf <<'REPART'
 [Partition]
@@ -357,6 +365,7 @@ REPART
 cat > /usr/lib/repart.d/50-root.conf <<'REPART'
 [Partition]
 Type=root
+Label=benchtop_root
 Format=btrfs
 Compression=zstd
 CompressionLevel=1
