@@ -9,7 +9,6 @@
     <preferences>
         <version>0.1.0</version>
         <packagemanager>zypper</packagemanager>
-        <rpm-excludedocs>true</rpm-excludedocs>
         <locale>en_US</locale>
         <type
             image="oem"
