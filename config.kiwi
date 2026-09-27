@@ -84,12 +84,18 @@
              it from arriving as a recommended package. KIWI implements <ignore>
              as "zypper al", so the lock persists in the built image. -->
         <ignore name="iwd"/>
+        <!-- Flathub is added to each user's own Flatpak installation
+             (tcbl-flathub.service, from tc-benchtop-settings), not
+             system-wide. openSUSE's flatpak-remote-flathub adds it
+             system-wide and supplements flatpak; this lock keeps it out. -->
+        <ignore name="flatpak-remote-flathub"/>
     </packages>
     <packages type="bootstrap">
-        <!-- The rpm macro that keeps the htop, nvtop and atop launchers out
-             of the image (%_netsharedpath, from tc-benchtop-settings). rpm
-             reads macros when it starts, so the macro has to be in place
-             before the image packages are installed. -->
+        <!-- The rpm macro that keeps the launchers of terminal programs
+             (htop, nvtop, atop, amdgpu_top's terminal interface) out of the
+             image (%_netsharedpath, from tc-benchtop-settings). rpm reads
+             macros when it starts, so the macro has to be in place before
+             the image packages are installed. -->
         <package name="tc-benchtop-settings-rpm"/>
         <package name="coreutils"/>
         <package name="gawk"/>

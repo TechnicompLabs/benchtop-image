@@ -183,6 +183,11 @@ echo "file:///ignition" >> /home/tik/.config/gtk-3.0/bookmarks
 # installer autostart owns the first session instead of gnome-initial-setup.
 echo yes > /home/tik/.config/gnome-initial-setup-done
 
+# The installer account needs no Flathub: mask the per-user service that adds
+# it (tcbl-flathub.service, from tc-benchtop-settings).
+mkdir -p /home/tik/.config/systemd/user
+ln -s /dev/null /home/tik/.config/systemd/user/tcbl-flathub.service
+
 chown -R tik:users /home/tik
 
 #======================================
@@ -209,6 +214,9 @@ Exec=/usr/libexec/tcbl/create-user-dialog
 NoDisplay=true
 EOF
 echo yes > /home/tcbl-newuser/.config/gnome-initial-setup-done
+# No Flathub for this account either (see the tik account above).
+mkdir -p /home/tcbl-newuser/.config/systemd/user
+ln -s /dev/null /home/tcbl-newuser/.config/systemd/user/tcbl-flathub.service
 chown -R tcbl-newuser: /home/tcbl-newuser
 
 # GNOME's login screen does not list locked accounts, and useradd creates both
