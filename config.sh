@@ -584,9 +584,13 @@ rpm --import /usr/lib/rpm/gnupg/keys/gpg-pubkey-9f72b2da-68976fe8.asc
 #======================================
 # Add default kernel boot options
 #--------------------------------------
+# TCBL: only options that cannot be set anywhere else go on the kernel command
+# line. tc-benchtop-settings sets the rest: systemd's boot status messages
+# (system.conf.d), the lockup detectors (sysctl.d) and SATA staggered spin-up
+# (modprobe.d).
 # TCBL: no serial console. Aeon, like MicroOS, adds console=ttyS0,115200
 # console=tty0 for servers and VMs; without console= the kernel uses the screen.
-cmdline=('quiet' 'loglevel=2' 'systemd.show_status=0' 'vt.global_cursor_default=0')
+cmdline=('quiet' 'loglevel=2' 'vt.global_cursor_default=0')
 
 # TCBL: Plymouth shows its splash, and its graphical disk-password prompt, only
 # with "splash" on the kernel command line; without it, it prints boot messages.
@@ -617,9 +621,8 @@ fi
 # prediction is stale: the disk still unlocks and boot reaches the desktop.
 cmdline+=("measure-pcr-validator.ignore=yes")
 
-# Performance tuning (Source: notes Performance/Kernel Tuning.md, Storage and IO.md).
-# Full preemption, threaded IRQs and RCU no-callback/lazy for desktop latency;
-# disable the NMI/hardware watchdog; skip staggered SATA spin-up at boot.
+# Performance tuning (Source: notes Performance/Kernel Tuning.md).
+# Full preemption, threaded IRQs and RCU no-callback/lazy for desktop latency.
 cmdline+=("preempt=full")
 cmdline+=("threadirqs")
 cmdline+=("rcu_nocbs=all")
@@ -629,11 +632,6 @@ cmdline+=("rcu_nocbs=all")
 # ignored. rcu_nocbs=all still offloads callbacks. Kept so the parameter is
 # in place if a CONFIG_RCU_LAZY kernel is adopted.
 cmdline+=("rcutree.enable_rcu_lazy=1")
-cmdline+=("nowatchdog")
-# Redundant with nowatchdog (which disables both lockup detectors); kept
-# explicit.
-cmdline+=("nmi_watchdog=0")
-cmdline+=("libahci.ignore_sss=1")
 
 if [ -e /etc/default/grub ]; then
 	sed -i "s#^GRUB_CMDLINE_LINUX_DEFAULT=.*\$#GRUB_CMDLINE_LINUX_DEFAULT=\"${cmdline[*]}\"#" /etc/default/grub
