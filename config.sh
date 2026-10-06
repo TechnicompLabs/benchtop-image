@@ -633,6 +633,15 @@ cmdline+=("rcu_nocbs=all")
 # in place if a CONFIG_RCU_LAZY kernel is adopted.
 cmdline+=("rcutree.enable_rcu_lazy=1")
 
+# TCBL: turn the IOMMU on for Intel machines too. openSUSE's kernel leaves
+# CONFIG_INTEL_IOMMU_DEFAULT_ON off, although upstream turns it on. The AMD
+# IOMMU is on by default (amd_iommu= has no "on" value), and iommu=pt would
+# repeat openSUSE's own default, CONFIG_IOMMU_DEFAULT_PASSTHROUGH. Without an
+# Intel DMAR table the Intel driver does nothing, so the option is harmless on
+# AMD. A TCBL kernel built with CONFIG_INTEL_IOMMU_DEFAULT_ON makes it
+# unnecessary (notes: Build Configuration.md, Custom kernel).
+cmdline+=("intel_iommu=on")
+
 if [ -e /etc/default/grub ]; then
 	sed -i "s#^GRUB_CMDLINE_LINUX_DEFAULT=.*\$#GRUB_CMDLINE_LINUX_DEFAULT=\"${cmdline[*]}\"#" /etc/default/grub
 else
