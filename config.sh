@@ -441,11 +441,12 @@ dump_image_repart_self() {
 }
 PREPMOD
 
-# TCBL live-USB tik modules. 01-tcbl-exit, 12-tcbl-machine-id and
-# 13-tcbl-no-memtest must run before particular vendored modules (10-welcome,
-# 15-encrypt), and tik loads /usr/lib/tik/modules/<phase> before
-# /etc/tik/modules/<phase>, so those three sit beside the vendored modules.
-# 17-tcbl-live-cleanup has no ordering need.
+# TCBL live-USB tik modules. 01-tcbl-exit, 12-tcbl-machine-id,
+# 13-tcbl-no-memtest and 14-tcbl-package-sets must run before particular
+# vendored modules (10-welcome, 15-encrypt), and tik loads
+# /usr/lib/tik/modules/<phase> before /etc/tik/modules/<phase>, so those four
+# sit beside the vendored modules. 20-tcbl-package-sets and
+# 17-tcbl-live-cleanup have no ordering need.
 mkdir -p /usr/lib/tik/modules/pre /usr/lib/tik/modules/post
 cat > /usr/lib/tik/modules/pre/01-tcbl-exit <<'EXITMOD'
 # SPDX-License-Identifier: MIT
@@ -506,6 +507,214 @@ log "[tcbl-no-memtest] masking the memtest86+ boot entry on the installed system
 prun /usr/bin/mkdir -p "${TIK_ROOT_MNT}/etc/sdbootutil/entries.d"
 prun /usr/bin/tee "${TIK_ROOT_MNT}/etc/sdbootutil/entries.d/memtest86+.conf" <<< "# TCBL: no memtest86+ boot entry on installed systems (see /usr/lib/sdbootutil/entries.d/memtest86+.conf)" > /dev/null
 MEMTESTMOD
+
+cat > /usr/lib/tik/modules/post/14-tcbl-package-sets <<'SETSPOSTMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: install the optional package sets chosen in the pre module
+# 20-tcbl-package-sets (/etc/tik/modules/pre). Runs before 15-encrypt, so the
+# boot entries, initrd and TPM policy that 15-encrypt creates cover the final
+# system.
+#
+# transactional-update cannot install into another disk: it rejects --root,
+# tukit has no option for another root, and in tik's chroot tukit would reach
+# the USB's own snapper through the D-Bus socket in the bind-mounted /run.
+# Instead, this installs into the new system's first snapshot before that
+# system has ever booted, the way the image build installs packages: the
+# snapshot is made writable, zypper installs into it with --root (as
+# transactional-update runs zypper into its new snapshot), and the snapshot is
+# made read-only again. Packages are downloaded first, so a lost connection
+# leaves the snapshot unchanged. Recommended packages stay out, as in the
+# image.
+
+# Reads zypper's output: logs each line and shows it in tik's progress
+# dialog, mapping zypper's (n/N) counter onto module percentages $1 to $2.
+# tik's own log lines (from prun-opt) go straight to the log.
+tcbl_sets_progress() {
+    local from=$1 to=$2 line percent=$1
+    while IFS= read -r line; do
+        if [[ "${line}" == "["*"][LOG] "* ]]; then
+            echo "${line}" >&2
+            continue
+        fi
+        log "[tcbl-package-sets] ${line}"
+        if [[ "${line}" =~ \(\ *([0-9]+)/([0-9]+)\) ]] && [ "${BASH_REMATCH[2]}" -gt 0 ]; then
+            percent=$(( from + (to - from) * BASH_REMATCH[1] / BASH_REMATCH[2] ))
+        fi
+        line="${line//[<>&]/}"
+        tik_progress_step "${line:0:100}" "${percent}"
+    done
+}
+
+# Runs zypper on the new system with its output in tik's progress dialog,
+# between module percentages $1 and $2. Sets retval to zypper's exit code.
+tcbl_sets_zypper() {
+    local from=$1 to=$2 fifo reader
+    shift 2
+    fifo="$(mktemp -u /tmp/tcbl-package-sets-fifo.XXXXXXXXXX)"
+    mkfifo "${fifo}"
+    tcbl_sets_progress "${from}" "${to}" < "${fifo}" &
+    reader=$!
+    retval=0
+    prun-opt /usr/bin/env ZYPP_LOCK_TIMEOUT=300 /usr/bin/zypper --root "${TIK_ROOT_MNT}" --non-interactive "$@" > "${fifo}" 2>&1
+    wait "${reader}"
+    rm -f "${fifo}"
+}
+
+if [ -n "${tcbl_package_sets}" ]; then
+    read -r -a tcbl_sets <<< "${tcbl_package_sets}"
+    tik_target_mount "" "required"
+    tik_progress_step "Preparing the optional software" 0
+    log "[tcbl-package-sets] making the first snapshot writable to install ${tcbl_package_sets}"
+    prun /usr/sbin/btrfs property set -t subvol "${TIK_ROOT_MNT}" ro false
+
+    tcbl_sets_status=""
+    while [ -z "${tcbl_sets_status}" ]; do
+        tcbl_sets_zypper 0 50 install --download-only --no-recommends --auto-agree-with-licenses "${tcbl_sets[@]}"
+        if [ "${retval}" = "0" ]; then
+            tcbl_sets_status="downloaded"
+        else
+            log "[tcbl-package-sets] download failed (${retval})"
+            if ! d_opt --question --no-wrap --title="Optional Software" --ok-label="Try Again" --cancel-label="Continue Without It" \
+                --text="The optional software could not be downloaded.\n\nCheck the network connection and try again, or continue without it. It can be installed later with\n<tt>sudo transactional-update pkg install ${tcbl_package_sets}</tt>"; then
+                tcbl_sets_status="skipped"
+            fi
+        fi
+    done
+
+    if [ "${tcbl_sets_status}" = "downloaded" ]; then
+        tcbl_sets_zypper 50 95 install --no-recommends --auto-agree-with-licenses "${tcbl_sets[@]}"
+        case "${retval}" in
+            # 102 and 103: a reboot or restart is advised; 107: a package
+            # script failed, but the packages are installed
+            0|102|103|107)
+                tcbl_sets_status="installed"
+                ;;
+            *)
+                tcbl_sets_status="failed"
+                ;;
+        esac
+    fi
+
+    # Remove the downloaded packages from the new system's cache
+    tcbl_sets_zypper 95 95 clean
+    prun /usr/sbin/btrfs property set -t subvol "${TIK_ROOT_MNT}" ro true
+    log "[tcbl-package-sets] ${tcbl_sets_status}: ${tcbl_package_sets}"
+
+    if [ "${tcbl_sets_status}" = "failed" ]; then
+        d --warning --no-wrap --title="Optional Software" \
+            --text="The optional software could not be installed completely.\n\nIt can be installed later with\n<tt>sudo transactional-update pkg install ${tcbl_package_sets}</tt>"
+    fi
+    tik_progress_step "Optional software finished" 100
+fi
+SETSPOSTMOD
+
+cat > /etc/tik/modules/pre/20-tcbl-package-sets <<'SETSPREMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: optional package sets. The image installs patterns-tc-benchtop-base;
+# this offers patterns-tc-benchtop-languages and patterns-tc-benchtop-admin,
+# which the post module 14-tcbl-package-sets installs into the new system.
+# Before the disk is erased, it refreshes the software sources and resolves
+# the chosen sets against the running USB system, which is what gets
+# installed, so a missing network connection or a set that cannot be
+# installed shows up here, together with the download and disk space the sets
+# need. Keep the list in step with patterns-tc-benchtop.spec. zenity's
+# checklist has no console (cenity) equivalent, so an installation without a
+# graphical session does not offer the sets.
+
+tcbl_package_sets=""
+tcbl_sets_xml=""
+
+tcbl_sets_gb() {
+    if [ -n "$1" ]; then
+        awk -v bytes="$1" 'BEGIN { printf "%.1f GB", bytes / 1e9 }'
+    else
+        echo "unknown"
+    fi
+}
+
+# Refreshes the software sources and resolves the chosen sets, showing a busy
+# dialog. Sets retval: 0 when the sets can be installed, 200 when the sources
+# could not be refreshed, zypper's exit code otherwise. Leaves zypper's XML
+# summary in ${tcbl_sets_xml}.
+tcbl_sets_check() {
+    local fifo busy sets
+    rm -f "${tcbl_sets_xml}"
+    tcbl_sets_xml="$(mktemp /tmp/tcbl-package-sets.XXXXXXXXXX)"
+    fifo="$(mktemp -u /tmp/tcbl-package-sets-fifo.XXXXXXXXXX)"
+    mkfifo "${fifo}"
+    d --progress --title="Optional Software" --text="Checking the software sources" --pulsate --auto-close --no-cancel --width=400 < "${fifo}" &
+    busy=$!
+    exec {tcbl_sets_fd}> "${fifo}"
+    read -r -a sets <<< "${tcbl_package_sets}"
+    retval=0
+    prun-opt /usr/bin/env ZYPP_LOCK_TIMEOUT=300 /usr/bin/sh -c 'zypper --non-interactive refresh --services >&2 || exit 200
+exec zypper --xmlout --non-interactive install --dry-run --no-recommends --auto-agree-with-licenses "$@"' sh "${sets[@]}" > "${tcbl_sets_xml}"
+    exec {tcbl_sets_fd}>&-
+    wait "${busy}"
+    rm -f "${fifo}"
+}
+
+tcbl_sets_ask() {
+    local name message download space
+    while true; do
+        d --list --checklist --width=900 --height=300 --title="Optional Software" --ok-label="Continue" \
+            --text="${TIK_OS_NAME} installs its base system. These sets can be installed with it. They are downloaded during the installation, so this computer needs a network connection.\n\nThey can also be added or removed later." \
+            --column="Install" --column="Package" --column="Software" --column="Includes" \
+            --hide-column=2 --print-column=2 --separator=" " \
+            FALSE patterns-tc-benchtop-languages "Programming languages" "Clang, Python, Ruby, Java, Go, Rust, Node.js, PHP, R, Haskell, OCaml and more" \
+            FALSE patterns-tc-benchtop-admin "Remote administration and servers" "Cockpit, the Samba and NFS servers, Ansible, OpenTofu, Kubernetes tools, database clients"
+        tcbl_package_sets=""
+        for name in ${result}; do
+            case "${name}" in
+                patterns-tc-benchtop-languages|patterns-tc-benchtop-admin)
+                    tcbl_package_sets="${tcbl_package_sets:+${tcbl_package_sets} }${name}"
+                    ;;
+            esac
+        done
+        if [ -z "${tcbl_package_sets}" ]; then
+            log "[tcbl-package-sets] no optional sets chosen"
+            return 0
+        fi
+
+        while true; do
+            tcbl_sets_check
+            case "${retval}" in
+                0)
+                    break
+                    ;;
+                200)
+                    message="The software sources cannot be reached.\n\nConnect to a network with the menu in the top right corner of the screen, then try again."
+                    ;;
+                *)
+                    message="The selected software cannot be installed at the moment.\n\n${TIK_OS_NAME} can be installed without it, and it can be added later."
+                    ;;
+            esac
+            log "[tcbl-package-sets] check failed (${retval})"
+            if ! d_opt --question --no-wrap --title="Optional Software" --ok-label="Try Again" --cancel-label="Continue Without It" --text="${message}"; then
+                log "[tcbl-package-sets] continuing without the optional sets"
+                tcbl_package_sets=""
+                rm -f "${tcbl_sets_xml}"
+                return 0
+            fi
+        done
+
+        download="$(grep -o 'download-size="[0-9]*"' "${tcbl_sets_xml}" | grep -o '[0-9][0-9]*' | head -n 1)"
+        space="$(grep -o 'space-usage-diff="[0-9]*"' "${tcbl_sets_xml}" | grep -o '[0-9][0-9]*' | head -n 1)"
+        rm -f "${tcbl_sets_xml}"
+        if d_opt --question --no-wrap --title="Optional Software" --ok-label="Continue" --cancel-label="Change Selection" \
+            --text="The selected software is downloaded and installed during the installation.\n\nDownload: <b>$(tcbl_sets_gb "${download}")</b>\nDisk space: <b>$(tcbl_sets_gb "${space}")</b>\n\nKeep this computer connected to the network until the installation is complete."; then
+            log "[tcbl-package-sets] chosen: ${tcbl_package_sets} (download ${download:-unknown} bytes, disk space ${space:-unknown} bytes)"
+            return 0
+        fi
+    done
+}
+
+if $gui; then
+    tcbl_sets_ask
+else
+    log "[tcbl-package-sets] no graphical session, not offering the optional sets"
+fi
+SETSPREMOD
 
 mkdir -p /etc/tik/modules/post
 cat > /etc/tik/modules/post/17-tcbl-live-cleanup <<'CLEANMOD'
