@@ -15,7 +15,7 @@ User** makes an account for using the stick as a live system; accounts made
 there are copied onto every system installed from it. The installer also
 offers the two optional package sets, programming languages and remote
 administration and servers, and downloads and installs them into the new
-system during the installation. The TC Benchtop logos
+system during the installation. It asks for the computer's host name, shows the installation's progress and details, and has the installed system relabel its files for SELinux at its first boot. The TC Benchtop logos
 and wallpaper come from the `tc-benchtop-branding` package (repository
 benchtop-branding), which the pattern requires; a `tc-benchtop-release` package
 for the system's identity is still to come.

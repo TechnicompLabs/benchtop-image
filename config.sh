@@ -361,6 +361,17 @@ TIKCONF
 # Aeon's self-deploy layout has none. TCBL addition: Label=benchtop_root names
 # the root partition and its file system (systemd-repart's default is
 # root-x86-64); it matches TIK_CRYPT_MAPPER in the tik configuration above.
+#
+# TCBL: discard=async on every MountPoint=. systemd-repart's --generate-fstab
+# puts a plain "discard" in front of the options given here, and on Btrfs that
+# is synchronous discard, which trims every freed extent at once and made an
+# installed system stall (systemd issue 38829). Btrfs applies the discard
+# options in order, so the later discard=async wins; it is also the kernel's
+# own default for Btrfs on devices that support discard.
+#
+# TCBL: ExcludeFiles also leaves out the live session's zypper and man caches
+# and its journal (the directories are kept), which the installed system
+# rebuilds or starts afresh.
 mkdir -p /usr/lib/repart.d
 cat > /usr/lib/repart.d/00-esp.conf <<'REPART'
 [Partition]
@@ -381,19 +392,19 @@ GrowFileSystem=off
 Subvolumes=/@ /@/.snapshots /@/home /@/opt /@/root /@/srv /@/var /@/boot/writable /@/usr/local /@/boot/grub2/x86_64-efi /@/boot/grub2/i386-pc /@/.snapshots/1/snapshot:ro /@/.snapshots/1/snapshot/etc
 MakeDirectories=/@ /@/.snapshots /@/.snapshots/1/snapshot /@/.snapshots/1/snapshot/etc /@/.snapshots/1/snapshot/.snapshots /@/.snapshots/1/snapshot/boot/efi /@/.snapshots/1/snapshot/boot/writable /@/.snapshots/1/snapshot/boot/grub2/x86_64-efi /@/.snapshots/1/snapshot/boot/grub2/i386-pc /@/home /@/opt /@/root /@/srv /@/var /@/boot/writable /@/usr/local /@/boot/grub2/x86_64-efi /@/boot/grub2/i386-pc
 DefaultSubvolume=/@/.snapshots/1/snapshot
-MountPoint=/:'compress=zstd:1',ro=vfs
-MountPoint=/.snapshots:'compress=zstd:1',subvol=/@/.snapshots
-MountPoint=/home:'compress=zstd:1',subvol=/@/home
-MountPoint=/opt:'compress=zstd:1',subvol=/@/opt
-MountPoint=/root:'compress=zstd:1',subvol=/@/root,x-initrd.mount
-MountPoint=/srv:'compress=zstd:1',subvol=/@/srv
-MountPoint=/var:'compress=zstd:1',subvol=/@/var,x-initrd.mount
-MountPoint=/boot/writable:'compress=zstd:1',subvol=/@/boot/writable
-MountPoint=/usr/local:'compress=zstd:1',subvol=/@/usr/local
-MountPoint=/boot/grub2/x86_64-efi:'compress=zstd:1',subvol=/@/boot/grub2/x86_64-efi
-MountPoint=/boot/grub2/i386-pc:'compress=zstd:1',subvol=/@/boot/grub2/i386-pc
+MountPoint=/:'compress=zstd:1',ro=vfs,discard=async
+MountPoint=/.snapshots:'compress=zstd:1',subvol=/@/.snapshots,discard=async
+MountPoint=/home:'compress=zstd:1',subvol=/@/home,discard=async
+MountPoint=/opt:'compress=zstd:1',subvol=/@/opt,discard=async
+MountPoint=/root:'compress=zstd:1',subvol=/@/root,x-initrd.mount,discard=async
+MountPoint=/srv:'compress=zstd:1',subvol=/@/srv,discard=async
+MountPoint=/var:'compress=zstd:1',subvol=/@/var,x-initrd.mount,discard=async
+MountPoint=/boot/writable:'compress=zstd:1',subvol=/@/boot/writable,discard=async
+MountPoint=/usr/local:'compress=zstd:1',subvol=/@/usr/local,discard=async
+MountPoint=/boot/grub2/x86_64-efi:'compress=zstd:1',subvol=/@/boot/grub2/x86_64-efi,discard=async
+MountPoint=/boot/grub2/i386-pc:'compress=zstd:1',subvol=/@/boot/grub2/i386-pc,discard=async
 ExcludeFilesTarget=/@/.snapshots/1/snapshot/.snapshots/ /@/.snapshots/1/snapshot/home/ /@/.snapshots/1/snapshot/opt/ /@/.snapshots/1/snapshot/root/ /@/.snapshots/1/snapshot/srv/ /@/.snapshots/1/snapshot/var/ /@/.snapshots/1/snapshot/boot/writable/ /@/.snapshots/1/snapshot/usr/local/ /@/.snapshots/1/snapshot/boot/grub2/x86_64-efi/ /@/.snapshots/1/snapshot/boot/grub2/i386-pc/
-ExcludeFiles=/ignition /etc/sudoers.d/51-tik /etc/polkit-1/rules.d/10-tik.rules /etc/tik-firstboot /home/tik /proc/ /dev/ /sys/ /tmp/ /var/tmp/ /boot/ /mnt/ /run/
+ExcludeFiles=/ignition /etc/sudoers.d/51-tik /etc/polkit-1/rules.d/10-tik.rules /etc/tik-firstboot /home/tik /proc/ /dev/ /sys/ /tmp/ /var/tmp/ /boot/ /mnt/ /run/ /var/cache/zypp/ /var/cache/man/ /var/log/journal/
 CopyFiles=/:/@/.snapshots/1/snapshot
 CopyFiles=/.snapshots/1/info.xml:/@/.snapshots/1/info.xml
 CopyFiles=/home:/@/home
@@ -428,8 +439,23 @@ cat > /etc/tik/modules/pre/90-tcbl-repart-prep <<'PREPMOD'
 #
 # tik has no hook between its "erase the disk?" confirmation and repart, so this
 # redefines dump_image_repart_self from tik-core-helper (tik loads its helpers
-# before modules, so this definition wins). It is upstream's function verbatim
-# plus the two lines marked TCBL. Re-sync if a tik update changes that function.
+# before modules, so this definition wins). It is upstream's function plus the
+# lines marked TCBL. Re-sync if a tik update changes that function.
+#
+# TCBL, in the same function because it is the step that follows the "erase
+# the disk?" confirmation:
+# - mkfs.btrfs runs without its own discard. With --empty=force,
+#   systemd-repart has already discarded the whole disk, but it still has
+#   mkfs.btrfs discard the new, encrypted root again (its "discard only once"
+#   check counts only per-partition discards); on a large disk that is the
+#   likely cause of a pause of several minutes, with nothing read or written,
+#   at the start of the copy. $SYSTEMD_REPART_MKFS_OPTIONS_BTRFS is
+#   systemd-repart's documented way to pass options to mkfs.btrfs; pkexec
+#   clears the environment, hence env.
+# - repart's messages go to tik's log instead of a dialog that does not show
+#   them, and two windows replace upstream's "Deploying OS Image" bar: the
+#   installation details (tik's log, as it grows, for the rest of the
+#   installation) and the copy's progress (copy-progress, below).
 dump_image_repart_self() {
     local image_target=$1
     create_keyfile
@@ -437,16 +463,96 @@ dump_image_repart_self() {
     log "[dump_image_repart_self] self-deploying"
     prun /usr/sbin/wipefs --all "${image_target}"    # TCBL
     prun-opt udevadm settle --timeout=30             # TCBL
-    prun systemd-repart --no-pager --pretty=0 --empty=force --dry-run=no --key-file="${tik_keyfile}" --generate-fstab=/etc/fstab.repart "${image_target}" > >(d --progress --title="Installing ${TIK_OS_NAME}" --text="Deploying OS Image" --pulsate --auto-close --no-cancel --width=400)
+    tcbl_show_details                                # TCBL
+    tcbl_copy_progress_start                         # TCBL
+    prun /usr/bin/env SYSTEMD_REPART_MKFS_OPTIONS_BTRFS=--nodiscard systemd-repart --no-pager --pretty=0 --empty=force --dry-run=no --key-file="${tik_keyfile}" --generate-fstab=/etc/fstab.repart "${image_target}" 1>&2    # TCBL: mkfs.btrfs option, output to the log
+    tcbl_copy_progress_wait                          # TCBL
+}
+
+# TCBL: a window that follows tik's log for the rest of the installation. It
+# closes when the installation ends (the system restarts, or after a failure
+# the session ends) or when it is closed, which does not affect the
+# installation.
+tcbl_show_details() {
+    $gui || return 0
+    [ -n "${tcbl_details_pid}" ] && return 0
+    (tail -n +1 -F "${tik_log}" 2>/dev/null | zenity --text-info --title="Installation Details" --auto-scroll --width=800 --height=450 --ok-label="Hide") >/dev/null 2>&1 &
+    tcbl_details_pid=$!
+    log "[tcbl-details] showing the installation details"
+}
+
+# TCBL: the copy's progress, from the bytes mkfs.btrfs has read against the
+# size of the system that is copied, which config.sh records when the image is
+# built. copy-progress reads mkfs.btrfs's I/O counters, so it runs as root, once.
+tcbl_copy_progress_start() {
+    tcbl_copy_pid=""
+    $gui || return 0
+    (pkexec /usr/libexec/tcbl/copy-progress | zenity --progress --title="Installing ${TIK_OS_NAME}" --text="Preparing the disk" --percentage=0 --auto-close --no-cancel --width=450) >/dev/null 2>&1 &
+    tcbl_copy_pid=$!
+}
+
+tcbl_copy_progress_wait() {
+    [ -n "${tcbl_copy_pid}" ] && wait "${tcbl_copy_pid}"
+    tcbl_copy_pid=""
 }
 PREPMOD
+
+# TCBL: copy-progress (see tcbl_copy_progress_start above) and the size it
+# measures against. Prints zenity --progress lines while systemd-repart runs:
+# a percentage and the amount copied and the time taken, while mkfs.btrfs
+# copies the system into the new file system.
+mkdir -p /usr/libexec/tcbl /usr/share/tcbl
+cat > /usr/libexec/tcbl/copy-progress <<'COPYPROGRESS'
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+total="$(cat /usr/share/tcbl/copy-bytes 2>/dev/null)"
+[[ "${total}" =~ ^[0-9]+$ ]] && [ "${total}" -gt 0 ] || total=0
+start=${SECONDS}
+
+gb() { awk -v b="$1" 'BEGIN { printf "%.1f GB", b / 1e9 }'; }
+elapsed() { local s=$(( SECONDS - start )); printf '%d:%02d' $(( s / 60 )) $(( s % 60 )); }
+
+# Wait for mkfs.btrfs, as long as systemd-repart is running
+pid=""
+while [ -z "${pid}" ]; do
+    pgrep -x systemd-repart > /dev/null || { echo 100; exit 0; }
+    pid="$(pgrep -n -x mkfs.btrfs)" && break
+    echo "# Preparing the disk ($(elapsed))"
+    sleep 2
+done
+
+# Follow the bytes it reads
+while [ -r "/proc/${pid}/io" ]; do
+    read_bytes="$(awk '/^rchar:/ { print $2 }' "/proc/${pid}/io" 2>/dev/null)"
+    [ -n "${read_bytes}" ] || break
+    if [ "${total}" -gt 0 ]; then
+        percent=$(( read_bytes * 100 / total ))
+        [ "${percent}" -gt 99 ] && percent=99
+        echo "${percent}"
+        echo "# Copying the system: $(gb "${read_bytes}") of about $(gb "${total}") ($(elapsed))"
+    else
+        echo "# Copying the system: $(gb "${read_bytes}") ($(elapsed))"
+    fi
+    sleep 2
+done
+
+# Until systemd-repart has finished
+while pgrep -x systemd-repart > /dev/null; do
+    echo 99
+    echo "# Finishing the disk ($(elapsed))"
+    sleep 2
+done
+echo 100
+COPYPROGRESS
+chmod 0755 /usr/libexec/tcbl/copy-progress
 
 # TCBL live-USB tik modules. 01-tcbl-exit, 12-tcbl-machine-id,
 # 13-tcbl-no-memtest and 14-tcbl-package-sets must run before particular
 # vendored modules (10-welcome, 15-encrypt), and tik loads
 # /usr/lib/tik/modules/<phase> before /etc/tik/modules/<phase>, so those four
-# sit beside the vendored modules. 20-tcbl-package-sets and
-# 17-tcbl-live-cleanup have no ordering need.
+# sit beside the vendored modules. 20-tcbl-package-sets, 22-tcbl-hostname,
+# 17-tcbl-live-cleanup, 18-tcbl-hostname and 19-tcbl-autorelabel have no
+# ordering need.
 mkdir -p /usr/lib/tik/modules/pre /usr/lib/tik/modules/post
 cat > /usr/lib/tik/modules/pre/01-tcbl-exit <<'EXITMOD'
 # SPDX-License-Identifier: MIT
@@ -716,13 +822,41 @@ else
 fi
 SETSPREMOD
 
+cat > /etc/tik/modules/pre/22-tcbl-hostname <<'HOSTPREMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: ask for the installed system's host name, which the post module
+# 18-tcbl-hostname writes to /etc/hostname. That makes it the static host
+# name, so NetworkManager does not replace it with a name from DHCP. A host
+# name here is one label: letters, digits and hyphens, up to 63 characters,
+# not starting or ending with a hyphen, stored in lowercase. The console
+# (cenity) entry has no default text, so there the name has to be typed.
+tcbl_hostname=""
+while true; do
+    d --entry --title="Computer Name" --width=500 --entry-text="benchtop" \
+        --text="Choose a name for this computer. It identifies the computer on the network.\n\nUse letters, digits and hyphens, up to 63 characters."
+    tcbl_hostname="${result,,}"
+    if [[ "${tcbl_hostname}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] && [ "${tcbl_hostname}" != "localhost" ]; then
+        log "[tcbl-hostname] chosen: ${tcbl_hostname}"
+        break
+    fi
+    log "[tcbl-hostname] rejected: ${result}"
+    d --warning --no-wrap --title="Computer Name" \
+        --text="<b>${result//[<>&]/}</b> cannot be used as a computer name.\n\nUse letters, digits and hyphens, up to 63 characters, not starting or ending with a hyphen."
+done
+HOSTPREMOD
+
 mkdir -p /etc/tik/modules/post
 cat > /etc/tik/modules/post/17-tcbl-live-cleanup <<'CLEANMOD'
 # SPDX-License-Identifier: MIT
 # TCBL: remove the live USB's login-screen setup from the installed system.
 # 10-sicu removes the tik account; this removes the "Create User" account, its
 # sudo rule, the passwordless GDM login rule and both accounts' AccountsService
-# records. Accounts made with "Create User" are kept.
+# records. Accounts made with "Create User" are kept. It also removes the live
+# session's log files, which the installer copies with /var (its caches and
+# journal are not copied; see ExcludeFiles in repart.d/50-root.conf). Log
+# directories are kept, since packages own them, and so is
+# /var/log/zypp/history, which records the optional sets that
+# 14-tcbl-package-sets installed.
 tik_target_mount "" "required"
 tik_progress_step "Removing live USB accounts" 0
 log "[tcbl-live-cleanup] removing tcbl-newuser, its sudo rule and the passwordless GDM rule"
@@ -739,8 +873,43 @@ prun-opt /usr/bin/grep -q 'user in tik:tcbl-newuser' "${TIK_ROOT_MNT}/etc/pam.d/
 if [ "${retval}" = "0" ]; then
     prun /usr/bin/rm -f "${TIK_ROOT_MNT}/etc/pam.d/gdm-password"
 fi
+log "[tcbl-live-cleanup] removing the live session's log files"
+prun /usr/bin/find "${TIK_ROOT_MNT}/var/log" -xdev -type f ! -path "${TIK_ROOT_MNT}/var/log/zypp/history" -delete
 tik_progress_step "Live USB accounts removed" 100
 CLEANMOD
+
+cat > /etc/tik/modules/post/18-tcbl-hostname <<'HOSTPOSTMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: write the host name chosen in the pre module 22-tcbl-hostname to the
+# installed system.
+if [ -n "${tcbl_hostname}" ]; then
+    tik_target_mount "" "required"
+    tik_progress_step "Setting the computer name" 0
+    log "[tcbl-hostname] writing /etc/hostname: ${tcbl_hostname}"
+    prun /usr/bin/tee "${TIK_ROOT_MNT}/etc/hostname" <<< "${tcbl_hostname}" > /dev/null
+    tik_progress_step "Computer name set" 100
+fi
+HOSTPOSTMOD
+
+cat > /etc/tik/modules/post/19-tcbl-autorelabel <<'RELABELMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: have the installed system give every file the SELinux label its policy
+# assigns, at its first boot. The installer copies the running USB's files and
+# their labels, including what the live session created (on one test system,
+# /var/log/tuned with the wrong type, which kept tuned-ppd from starting), and
+# 14-tcbl-package-sets installs with the USB's policy loaded rather than the
+# new system's, so packages that add policy modules (Cockpit, swtpm) get
+# generic labels. /etc/selinux/.autorelabel is openSUSE's request for a
+# relabel: selinux-autorelabel (required by microos-tools) relabels the root
+# snapshot, /etc and /var in the initrd and the other file systems before
+# local-fs.target, then removes the file. An empty file relabels types only,
+# keeping labels that are set on purpose, such as those of containers.
+tik_target_mount "" "required"
+if [ -e "${TIK_ROOT_MNT}/etc/selinux/config" ]; then
+    log "[tcbl-autorelabel] the installed system relabels itself at its first boot"
+    prun /usr/bin/touch "${TIK_ROOT_MNT}/etc/selinux/.autorelabel"
+fi
+RELABELMOD
 
 #======================================
 # Enable NetworkManager
@@ -892,3 +1061,14 @@ systemctl mask systemd-growfs-root.service
 cat >> /etc/fstab.tik << "EOF"
 /etc /etc none bind,x-initrd.mount 0 0
 EOF
+
+#======================================
+# TCBL: size of what the installer copies
+#--------------------------------------
+# The installer's copy-progress (repart-prep module above) measures the
+# bytes mkfs.btrfs reads against this: the apparent size of the files that
+# repart.d/50-root.conf copies, leaving out what its ExcludeFiles= leaves out.
+# Measured last, so that it includes what config.sh added.
+du -sbx --exclude=/tmp --exclude=/var/tmp --exclude=/boot --exclude=/mnt --exclude=/run \
+    --exclude=/ignition --exclude=/var/cache/zypp --exclude=/var/cache/man --exclude=/var/log/journal \
+    / | cut -f1 > /usr/share/tcbl/copy-bytes
