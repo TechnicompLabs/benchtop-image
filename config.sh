@@ -546,10 +546,10 @@ echo 100
 COPYPROGRESS
 chmod 0755 /usr/libexec/tcbl/copy-progress
 
-# TCBL live-USB tik modules. 01-tcbl-exit, 12-tcbl-machine-id,
-# 13-tcbl-no-memtest and 14-tcbl-package-sets must run before particular
-# vendored modules (10-welcome, 15-encrypt), and tik loads
-# /usr/lib/tik/modules/<phase> before /etc/tik/modules/<phase>, so those four
+# TCBL live-USB tik modules. 01-tcbl-exit, 06-tcbl-wallpaper,
+# 12-tcbl-machine-id, 13-tcbl-no-memtest and 14-tcbl-package-sets must run
+# before particular vendored modules (10-welcome, 15-encrypt), and tik loads
+# /usr/lib/tik/modules/<phase> before /etc/tik/modules/<phase>, so those five
 # sit beside the vendored modules. 20-tcbl-package-sets, 22-tcbl-hostname,
 # 17-tcbl-live-cleanup, 18-tcbl-hostname and 19-tcbl-autorelabel have no
 # ordering need.
@@ -579,6 +579,21 @@ cleanup() {
     fi
 }
 EXITMOD
+
+cat > /usr/lib/tik/modules/pre/06-tcbl-wallpaper <<'WALLPAPERMOD'
+# SPDX-License-Identifier: MIT
+# TCBL: the installer's desktop shows the navy board background
+# (tc-benchtop-board.png, from tc-benchtop-branding) in both the light and the
+# dark style. Like 05-setup-gnome-env, this sets the installer account's own
+# GNOME settings, so installed systems and accounts made with "Create User"
+# keep the default backgrounds. Runs before 10-welcome, so the background is
+# in place when the first dialog appears.
+tcbl_board="file:///usr/share/backgrounds/tc-benchtop/tc-benchtop-board.png"
+log "[tcbl-wallpaper] installer background: ${tcbl_board}"
+gsettings set org.gnome.desktop.background picture-uri "${tcbl_board}"
+gsettings set org.gnome.desktop.background picture-uri-dark "${tcbl_board}"
+gsettings set org.gnome.desktop.background primary-color '#141e33'
+WALLPAPERMOD
 
 cat > /usr/lib/tik/modules/post/12-tcbl-machine-id <<'IDMOD'
 # SPDX-License-Identifier: MIT
