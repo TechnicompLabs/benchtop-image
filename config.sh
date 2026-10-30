@@ -65,11 +65,6 @@ baseSetRunlevel graphical.target
 #--------------------------------------
 suseImportBuildKey
 
-#======================================
-# Set hostname by DHCP
-#--------------------------------------
-baseUpdateSysConfig /etc/sysconfig/network/dhcp DHCLIENT_SET_HOSTNAME yes
-
 # Add repos from /etc/YaST2/control.xml
 if [ -x /usr/sbin/add-yast-repos ]; then
 	add-yast-repos
@@ -89,13 +84,6 @@ if [ "${kiwi_btrfs_root_is_snapshot-false}" = 'true' ]; then
 	sed -i'' 's/^TIMELINE_CREATE=.*$/TIMELINE_CREATE="no"/g' /etc/snapper/configs/root
 	sed -i'' 's/^NUMBER_LIMIT=.*$/NUMBER_LIMIT="2-10"/g' /etc/snapper/configs/root
 	sed -i'' 's/^NUMBER_LIMIT_IMPORTANT=.*$/NUMBER_LIMIT_IMPORTANT="4-10"/g' /etc/snapper/configs/root
-fi
-
-#=====================================
-# Enable chrony if installed
-#-------------------------------------
-if [ -f /etc/chrony.conf ]; then
-	systemctl enable chronyd
 fi
 
 #=====================================
@@ -927,52 +915,12 @@ fi
 RELABELMOD
 
 #======================================
-# Enable NetworkManager
+# Services
 #--------------------------------------
-systemctl enable NetworkManager
-
-# DNS: tc-benchtop-settings hands NetworkManager's DNS to systemd-resolved
-# (90-tcbl-dns.conf). openSUSE's presets leave systemd-resolved disabled.
-systemctl enable systemd-resolved
-
-#======================================
-# Enable performance services
-#--------------------------------------
-# Source: notes Performance/Kernel Tuning.md, Memory Management.md, Storage and IO.md.
-# irqbalance, systemd-zram-service (zramswap.service) and util-linux (fstrim.timer)
-# come from patterns-tc-benchtop-base; rtkit and systemd-oomd (systemd-experimental)
-# are pulled in via config.kiwi. The enable is guarded so a unit missing from the
-# image cannot fail the set -e build.
-# systemd-oomd.service is commented out in the list below: it requires
-# systemd-experimental (also commented out in config.kiwi). Uncomment it
-# here AND uncomment systemd-experimental in config.kiwi to enable it.
-units=(
-    rtkit-daemon.service
-    irqbalance.service
-    zramswap.service
-    # systemd-oomd.service
-    fstrim.timer
-)
-for unit in "${units[@]}"; do
-    if systemctl enable "$unit"; then
-        echo "TCBL: enabled $unit"
-    else
-        echo "TCBL: WARNING: could not enable $unit (unit not present in image)"
-    fi
-done
-
-#======================================
-# Enable ZYPP_SINGLE_RPMTRANS
-#--------------------------------------
-echo '[main]' > /usr/etc/zypp/zypp.conf.d/singletrans.conf
-echo 'techpreview.ZYPP_SINGLE_RPMTRANS=1' >> /usr/etc/zypp/zypp.conf.d/singletrans.conf
-
-#======================================
-# TCBL package repository
-#--------------------------------------
-# tc-benchtop-settings adds the repository (repo-tcbl) and ships its signing key;
-# importing the key lets zypper use the repository without asking.
-rpm --import /usr/lib/rpm/gnupg/keys/gpg-pubkey-9f72b2da-68976fe8.asc
+# Enabled by presets, which systemd applies at the first boot: NetworkManager,
+# systemd-resolved and zram swap by tc-benchtop-settings (85-tcbl.preset);
+# chronyd, irqbalance and fstrim.timer by openSUSE's own presets. rtkit-daemon
+# is started by D-Bus when a program asks for realtime scheduling.
 
 #======================================
 # Add default kernel boot options
@@ -1000,10 +948,7 @@ fi
 #--------------------------------------
 if [[ -e /etc/selinux/config ]]; then
 	cmdline+=("security=selinux selinux=1")
-	# Adjust selinux config
-	sed -i -e 's|^SELINUX=.*|SELINUX=enforcing|g' \
-	    -e 's|^SELINUXTYPE=.*|SELINUXTYPE=targeted|g' \
-	    "/etc/selinux/config"
+	# enforcing and targeted are what selinux-policy writes on a new install
 
 	# Move an /.autorelabel file from initial installation to writeable location
 	test -f /.autorelabel && mv /.autorelabel /etc/selinux/.autorelabel
@@ -1015,8 +960,8 @@ fi
 cmdline+=("measure-pcr-validator.ignore=yes")
 
 # Performance tuning (Source: notes Performance/Kernel Tuning.md).
-# Full preemption, threaded IRQs and RCU no-callback/lazy for desktop latency.
-cmdline+=("preempt=full")
+# Threaded IRQs and RCU no-callback/lazy for desktop latency. Full preemption
+# is already the default of openSUSE's kernel (CONFIG_PREEMPT=y).
 cmdline+=("threadirqs")
 cmdline+=("rcu_nocbs=all")
 # rcutree.enable_rcu_lazy is a no-op unless the kernel is built with
@@ -1065,9 +1010,8 @@ fi
 echo 'ExecStartPre=/bin/sh -c "echo 'Please wait.. setting up your computer.. this may take a few minutes'"' >> /usr/lib/dracut/modules.d/30ignition/ignition-disks.service
 echo 'StandardOutput=tty' >> /usr/lib/dracut/modules.d/30ignition/ignition-disks.service
 
-setsebool -P selinuxuser_execmod 1
-setsebool -P selinuxuser_execheap 1
-setsebool -P selinuxuser_execstack 1
+# the SELinux booleans selinuxuser_execmod, execheap and execstack are set by
+# tc-benchtop-settings' post-install script
 
 # gh#AeonDesktop/project#7
 systemctl mask systemd-growfs-root.service

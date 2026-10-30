@@ -73,12 +73,6 @@
              systems mask it (tik post module 13-tcbl-no-memtest, config.sh). -->
         <package name="memtest86+"/>
         <package name="memtest86+-bls"/>
-        <!-- Performance services (Source: notes Performance/*). rtkit provides
-             rtkit-daemon; systemd-experimental provides systemd-oomd on openSUSE. -->
-        <package name="rtkit"/>
-        <!-- systemd-oomd is disabled for now; uncomment to pull the experimental
-             package (and uncomment systemd-oomd.service in config.sh). -->
-        <!-- <package name="systemd-experimental"/> -->
         <!-- Wi-Fi stays on wpa_supplicant (NetworkManager's default backend).
              Nothing in patterns-tc-benchtop-base requires iwd; this lock keeps
              it from arriving as a recommended package. KIWI implements <ignore>
