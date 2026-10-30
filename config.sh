@@ -923,19 +923,16 @@ RELABELMOD
 # is started by D-Bus when a program asks for realtime scheduling.
 
 #======================================
-# Add default kernel boot options
+# Kernel command line
 #--------------------------------------
-# TCBL: only options that cannot be set anywhere else go on the kernel command
-# line. tc-benchtop-settings sets the rest: systemd's boot status messages
-# (system.conf.d), the lockup detectors (sysctl.d) and SATA staggered spin-up
-# (modprobe.d).
+# TCBL: the options themselves come from tc-benchtop-settings
+# (/usr/kernel/cmdline.d/90-tcbl.conf), which sdbootutil adds to every boot
+# entry, so changes reach installed systems with updates. Only what belongs to
+# this image is written here: ignition's platform, for the image's first boot.
+# disk.sh and the installer (tik's 15-encrypt) append root=UUID=.
 # TCBL: no serial console. Aeon, like MicroOS, adds console=ttyS0,115200
 # console=tty0 for servers and VMs; without console= the kernel uses the screen.
-cmdline=('quiet' 'loglevel=2' 'vt.global_cursor_default=0')
-
-# TCBL: Plymouth shows its splash, and its graphical disk-password prompt, only
-# with "splash" on the kernel command line; without it, it prints boot messages.
-cmdline+=("splash")
+cmdline=()
 
 ignition_platform='metal'
 
@@ -944,41 +941,14 @@ if [ -n "${ignition_platform}" ]; then
 fi
 
 #======================================
-# If SELinux is installed, configure it like transactional-update setup-selinux
+# SELinux
 #--------------------------------------
+# security=selinux is in tc-benchtop-settings' command line file; enforcing and
+# targeted are what selinux-policy writes on a new install
 if [[ -e /etc/selinux/config ]]; then
-	cmdline+=("security=selinux selinux=1")
-	# enforcing and targeted are what selinux-policy writes on a new install
-
 	# Move an /.autorelabel file from initial installation to writeable location
 	test -f /.autorelabel && mv /.autorelabel /etc/selinux/.autorelabel
 fi
-
-# Make PCR 15 validation advisory only, never a poweroff. This prevents
-# the reboot-after-unlock behaviour seen on Aeon when a post-update PCR
-# prediction is stale: the disk still unlocks and boot reaches the desktop.
-cmdline+=("measure-pcr-validator.ignore=yes")
-
-# Performance tuning (Source: notes Performance/Kernel Tuning.md).
-# Threaded IRQs and RCU no-callback/lazy for desktop latency. Full preemption
-# is already the default of openSUSE's kernel (CONFIG_PREEMPT=y).
-cmdline+=("threadirqs")
-cmdline+=("rcu_nocbs=all")
-# rcutree.enable_rcu_lazy is a no-op unless the kernel is built with
-# CONFIG_RCU_LAZY=y, which the SUSE kernel configs (Tumbleweed stable,
-# SL-16.0, SL-16.1) do not set. Harmless: unknown dotted parameters are
-# ignored. rcu_nocbs=all still offloads callbacks. Kept so the parameter is
-# in place if a CONFIG_RCU_LAZY kernel is adopted.
-cmdline+=("rcutree.enable_rcu_lazy=1")
-
-# TCBL: turn the IOMMU on for Intel machines too. openSUSE's kernel leaves
-# CONFIG_INTEL_IOMMU_DEFAULT_ON off, although upstream turns it on. The AMD
-# IOMMU is on by default (amd_iommu= has no "on" value), and iommu=pt would
-# repeat openSUSE's own default, CONFIG_IOMMU_DEFAULT_PASSTHROUGH. Without an
-# Intel DMAR table the Intel driver does nothing, so the option is harmless on
-# AMD. A TCBL kernel built with CONFIG_INTEL_IOMMU_DEFAULT_ON makes it
-# unnecessary (notes: Build Configuration.md, Custom kernel).
-cmdline+=("intel_iommu=on")
 
 if [ -e /etc/default/grub ]; then
 	sed -i "s#^GRUB_CMDLINE_LINUX_DEFAULT=.*\$#GRUB_CMDLINE_LINUX_DEFAULT=\"${cmdline[*]}\"#" /etc/default/grub
