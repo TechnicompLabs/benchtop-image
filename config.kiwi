@@ -50,27 +50,17 @@
         <!-- The whole TC Benchtop package set. Resolving this against
              openSUSE:Factory x86_64 IS the dependency gate. -->
         <package name="patterns-tc-benchtop-base"/>
-        <!-- Installer: tik (Aeon Tailored Installation Kit). Encryption and
-             disk sizing happen at install time via systemd-repart + tik, not in
-             the initrd. -->
-        <package name="tik"/>
-        <!-- tik requires the virtual "tik-config"; tik-config-Aeon and
-             tik-config-generic both provide it, so OBS refuses to choose
-             ("have choice for tik-config needed by tik") and the build
-             will not start. Name the provider explicitly. Swap this for
-             tik-config-benchtop once that package exists. -->
-        <package name="tik-config-generic"/>
-        <!-- Tools the vendored tik installer modules use at install time
-             (root/usr/lib/tik/modules/): TPM2 detect/enroll, recovery-key QR,
-             SecureBoot state, laptop AC-power check. -->
-        <package name="tpm2.0-tools"/>
-        <package name="qrencode"/>
-        <package name="mokutil"/>
-        <package name="upower"/>
+        <!-- Installer: tik (Aeon Tailored Installation Kit) with TCBL's
+             configuration and modules, tik-config-benchtop (repository
+             benchtop-installer), which requires tik, the tik modules it uses
+             unchanged and the tools they need. Encryption and disk sizing
+             happen at install time via systemd-repart + tik, not in the
+             initrd. -->
+        <package name="tik-config-benchtop"/>
         <!-- memtest86+ in the installer USB's boot menu. memtest86+-bls ships
              the sdbootutil boot entry (/usr/lib/sdbootutil/entries.d), which
              disk.sh's `sdbootutil install` puts on the USB's ESP. Installed
-             systems mask it (tik post module 13-tcbl-no-memtest, config.sh). -->
+             systems mask it (tik post module 13-tcbl-no-memtest). -->
         <package name="memtest86+"/>
         <package name="memtest86+-bls"/>
     </packages>
