@@ -38,14 +38,8 @@ echo FONT="eurlatgr.psfu" >> /etc/vconsole.conf
 # image, matched against the OBS build time, proves whether a burn is current.
 echo "TCBL $(date -u +%FT%TZ)" > /usr/lib/tc-benchtop-build-id
 
-# TCBL OS branding: rebrand os-release NAME/PRETTY_NAME so the installed system
-# identifies as Technicomp Benchtop Linux (GNOME Tour/About, etc.). ID is left at
-# the base openSUSE value so tooling and the sdbootutil entry token keep working.
-if [ -f /usr/lib/os-release ]; then
-    sed -i -e 's/^NAME=.*/NAME="Technicomp Benchtop Linux"/' \
-           -e 's/^PRETTY_NAME=.*/PRETTY_NAME="Technicomp Benchtop Linux"/' \
-           /usr/lib/os-release
-fi
+# The name in os-release (Technicomp Benchtop Linux) comes from repo-tcbl's
+# openSUSE-release, a link to openSUSE's with only NAME and PRETTY_NAME changed.
 
 #======================================
 # prepare for setting root pw, timezone
@@ -54,11 +48,6 @@ echo "** reset machine settings"
 rm -f /etc/machine-id \
       /var/lib/zypp/AnonymousUniqueId \
       /var/lib/systemd/random-seed
-
-#======================================
-# Specify default systemd target
-#--------------------------------------
-baseSetRunlevel graphical.target
 
 #======================================
 # Import trusted rpm keys
