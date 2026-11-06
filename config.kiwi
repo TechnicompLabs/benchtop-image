@@ -47,29 +47,15 @@
         <source path="obsrepositories:/"/>
     </repository>
     <packages type="image">
-        <!-- The whole TC Benchtop package set. Resolving this against
-             openSUSE:Factory x86_64 IS the dependency gate. -->
         <package name="patterns-tc-benchtop-base"/>
-        <!-- Installer: tik (Aeon Tailored Installation Kit) with TCBL's
-             configuration and modules, tik-config-benchtop (repository
-             benchtop-installer), which requires tik, the tik modules it uses
-             unchanged and the tools they need. Encryption and disk sizing
-             happen at install time via systemd-repart + tik, not in the
-             initrd. -->
         <package name="tik-config-benchtop"/>
-        <!-- memtest86+ in the installer USB's boot menu. memtest86+-bls ships
-             the sdbootutil boot entry (/usr/lib/sdbootutil/entries.d), which
-             disk.sh's `sdbootutil install` puts on the USB's ESP. Installed
-             systems mask it (tik post module 13-tcbl-no-memtest). -->
+        <!-- memtest86+ in the USB's boot menu (masked on installed systems) -->
         <package name="memtest86+"/>
         <package name="memtest86+-bls"/>
     </packages>
     <packages type="bootstrap">
-        <!-- The rpm macro that keeps the launchers of terminal programs
-             (htop, nvtop, atop, amdgpu_top's terminal interface) out of the
-             image (%_netsharedpath, from tc-benchtop-settings). rpm reads
-             macros when it starts, so the macro has to be in place before
-             the image packages are installed. -->
+        <!-- rpm macro that keeps terminal programs' launchers out; it must be
+             in place before the image packages are installed -->
         <package name="tc-benchtop-settings-rpm"/>
         <package name="coreutils"/>
         <package name="gawk"/>
