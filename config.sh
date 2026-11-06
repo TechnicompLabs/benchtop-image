@@ -130,7 +130,7 @@ echo "file:///ignition" >> /home/tik/.config/gtk-3.0/bookmarks
 # No gnome-initial-setup and no Flathub for tik
 echo yes > /home/tik/.config/gnome-initial-setup-done
 mkdir -p /home/tik/.config/systemd/user
-ln -s /dev/null /home/tik/.config/systemd/user/tcbl-flathub.service
+ln -s /dev/null /home/tik/.config/systemd/user/configure-user-flathub.service
 
 chown -R tik:users /home/tik
 
@@ -154,7 +154,7 @@ EOF
 echo yes > /home/tcbl-newuser/.config/gnome-initial-setup-done
 # No Flathub for tcbl-newuser
 mkdir -p /home/tcbl-newuser/.config/systemd/user
-ln -s /dev/null /home/tcbl-newuser/.config/systemd/user/tcbl-flathub.service
+ln -s /dev/null /home/tcbl-newuser/.config/systemd/user/configure-user-flathub.service
 chown -R tcbl-newuser: /home/tcbl-newuser
 
 # GDM does not list locked accounts: give both a random, unrecorded password
