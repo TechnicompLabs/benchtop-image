@@ -3,9 +3,6 @@ set -euxo pipefail
 # Setup etc subvolume for T-U v5.0+
 /usr/libexec/setup-etc-subvol
 
-# Fix the filesystem label of the ignition partition, uppercase doesn't work with ignition
-e2label /dev/loop0p3 ignition
-
 rootuuid=$(findmnt / -n --output uuid)
 sed -i -e "s,\$, root=UUID=$rootuuid," /etc/kernel/cmdline
 arch="$(uname -m)"
